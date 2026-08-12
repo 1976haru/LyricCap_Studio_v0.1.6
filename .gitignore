@@ -1,0 +1,14 @@
+.venv/
+venv/
+env/
+__pycache__/
+*.pyc
+output/
+models/
+*.pt
+*.ckpt
+*.wav
+*.mp3
+*.srt
+build/
+dist/

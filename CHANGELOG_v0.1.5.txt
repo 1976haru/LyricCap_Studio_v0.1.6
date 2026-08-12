@@ -1,0 +1,17 @@
+LyricCap Studio v0.1.5
+======================
+
+SYNC FIX
+- Removed proportional timeline fallback that could create unsynchronised SRT.
+- Added music_precise mode: Demucs vocal isolation + VAD + stable-ts forced alignment.
+- Uses actual word timestamps to rebuild lyric-line cues if original_split grouping differs.
+- Strict validation: failed real alignment now stops instead of generating guessed timings.
+- Optional slow timestamp refinement pass.
+- Added music_fast and voice sync modes.
+- Progress messages now distinguish audio analysis/sync from translation.
+
+INSTALL
+- Added Demucs dependency.
+
+TRANSLATION
+- Keeps v0.1.4 Gemini context-aware EN/KO/JA translation and Argos fallback.

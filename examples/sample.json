@@ -1,0 +1,18 @@
+{
+  "meta": {
+    "songCount": 2,
+    "lyricLanguage": "english"
+  },
+  "songs": [
+    {
+      "trackNo": 1,
+      "title": "Sample Song One",
+      "lyrics": "[Verse 1]\nThe morning opens wide\nI walk beside the light\n[Chorus]\nStay a little while"
+    },
+    {
+      "trackNo": 2,
+      "title": "Sample Song Two",
+      "lyrics": "[Verse 1]\nThe station clock is slow\nThe summer windows glow\n[Chorus]\nTake the long road home"
+    }
+  ]
+}

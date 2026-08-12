@@ -1,0 +1,8 @@
+LyricCap Studio v0.1.4
+
+1. Fixed Argos IdentityTranslation .code error.
+2. Added Gemini context-aware natural lyric translation.
+3. Source JSON/TXT no longer needs Korean or Japanese translation fields.
+4. Added translation engine selector and Gemini API-key field.
+5. AI translation processes a whole song context and validates one output line per source cue.
+6. Kept Argos as optional offline fallback.

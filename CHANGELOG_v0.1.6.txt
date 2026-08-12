@@ -1,0 +1,15 @@
+LyricCap Studio v0.1.6
+
+[핵심 수정]
+- v0.1.5에서 정밀 음악 싱크 시 stable-ts 내부 Demucs 연동에서 발생할 수 있던
+  "tuple indices must be integers or slices, not tuple" 계열 호환성 오류를 회피합니다.
+- Demucs를 독립 subprocess로 실행하여 vocals.wav를 먼저 생성합니다.
+- 생성된 vocals.wav에 stable-ts + VAD 강제정렬을 적용합니다.
+- stable-ts align()에는 denoiser 옵션을 전달하지 않습니다.
+- 보컬 분리 결과를 output/.cache/vocals 아래 캐시하여 재실행 시 시간을 절약합니다.
+- 정렬 실패 시 임의 시간배분은 하지 않습니다.
+- diagnostics/sync_report.json에 alignedAudio 정보를 기록합니다.
+
+[권장]
+- 첫 시험은 영어 자막만, 1곡으로 진행하십시오.
+- 영어 곡은 base.en 또는 small.en 권장.

@@ -1,0 +1,4 @@
+openai-whisper==20250625
+demucs
+argostranslate
+mutagen

@@ -1,0 +1,10 @@
+LyricCap Studio v0.1.7
+
+Critical sync-engine replacement
+- Removed stable-ts forced alignment from the runtime sync path.
+- Fixes recurring internal error: "tuple indices must be integers or slices, not tuple".
+- Precise music sync now: Demucs vocals.wav -> official OpenAI Whisper word timestamps -> monotonic source-lyric/ASR matching.
+- Keeps JSON/TXT lyric text exactly; ASR is used only as timing anchors.
+- Low-confidence matches abort instead of creating fake evenly distributed timing.
+- sync_report.json now records syncEngine and lyricMatchRatio.
+- Pinned openai-whisper 20250625, the latest official OpenAI Whisper release.

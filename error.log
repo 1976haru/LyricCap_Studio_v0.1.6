@@ -1,0 +1,11 @@
+Traceback (most recent call last):
+  File "D:\04 자막프로그램\LyricCap_Studio_v0.1.6_PreciseSyncFix\LyricCap_Studio_v0.1.6\app.py", line 299, in _worker
+    results = process_songs(
+              ^^^^^^^^^^^^^^
+  File "D:\04 자막프로그램\LyricCap_Studio_v0.1.6_PreciseSyncFix\LyricCap_Studio_v0.1.6\src\lyriccap\batch.py", line 92, in process_songs
+    cues = aligner.align(song.audio_path, song.lyrics, song.source_language)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\04 자막프로그램\LyricCap_Studio_v0.1.6_PreciseSyncFix\LyricCap_Studio_v0.1.6\src\lyriccap\aligner.py", line 188, in align
+    raise AlignmentError(
+lyriccap.aligner.AlignmentError: 가사와 실제 보컬의 매칭률이 너무 낮습니다 (1.1%).
+잘못된 자막을 만들지 않기 위해 중단했습니다. 음원과 JSON의 곡이 같은지 확인하거나 small/medium 모델을 사용해 보세요.
