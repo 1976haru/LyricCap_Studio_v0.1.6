@@ -3,6 +3,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+from .languages import TARGET_LANGUAGES
+
 
 @dataclass
 class Song:
@@ -32,7 +34,7 @@ class Cue:
     def set_text(self, lang: str, value: str) -> None:
         if lang == self.source_language:
             self.source = value
-        if lang in {"en", "ko", "ja"}:
+        if lang in TARGET_LANGUAGES:
             setattr(self, lang, value)
 
 

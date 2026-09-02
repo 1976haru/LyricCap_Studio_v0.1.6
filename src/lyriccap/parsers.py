@@ -2,17 +2,16 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
+from .languages import LANG_ALIASES, normalize_language
 from .models import Song
 from .utils import clean_lyrics
 
 # 가사가 비어 직전 파싱에서 제외된 곡 목록. app.py가 사용자에게 보여줍니다.
 SKIPPED_TRACKS: list[str] = []
 
-LANG_MAP = {
-    "english": "en", "en": "en",
-    "korean": "ko", "ko": "ko", "한국어": "ko",
-    "japanese": "ja", "ja": "ja", "일본어": "ja",
-}
+# 언어 목록은 languages.py 한 곳에서 관리합니다. 이 이름은 기존 코드/도구가
+# parsers.LANG_MAP을 참조하고 있어 그대로 둡니다.
+LANG_MAP = LANG_ALIASES
 
 
 def parse_lyrics_file(path: Path, source_language: str = "auto") -> list[Song]:
@@ -29,7 +28,7 @@ def parse_json(path: Path, source_language: str = "auto") -> list[Song]:
     meta_lang = "en"
     if isinstance(data, dict):
         raw_lang = str(data.get("meta", {}).get("lyricLanguage", "english")).lower()
-        meta_lang = LANG_MAP.get(raw_lang, "en")
+        meta_lang = normalize_language(raw_lang, "en")
     lang = meta_lang if source_language == "auto" else source_language
 
     songs_data = data.get("songs") if isinstance(data, dict) else None

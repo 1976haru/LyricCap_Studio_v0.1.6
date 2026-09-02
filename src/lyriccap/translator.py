@@ -10,6 +10,10 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+# 언어 이름 표는 languages.py 한 곳에 있습니다. 프롬프트 코드가 이 이름을
+# 널리 참조하고 있어 모듈 이름으로 그대로 다시 내보냅니다.
+from .languages import LANG_NAMES_KO
+
 
 class _RateLimited(RuntimeError):
     """재시도하면 풀릴 수 있는 일시적 오류.
@@ -27,13 +31,6 @@ class _RateLimited(RuntimeError):
 
 class _ModelUnavailable(RuntimeError):
     """설정된 모델이 404인 경우. 키 문제가 아니라 모델 이름 문제입니다."""
-
-
-LANG_NAMES_KO = {
-    "en": "영어",
-    "ko": "한국어",
-    "ja": "일본어",
-}
 
 
 class TranslationCache:

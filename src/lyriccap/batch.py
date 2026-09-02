@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Callable
 from .aligner import StableTSAligner
 from .audio import audio_duration
+from .languages import language_name
 from .models import TrackResult
 from .srt import write_srt, write_combined, write_titles_srt
 from .translator import build_translator
@@ -101,7 +102,7 @@ def process_songs(
                 if lang != song.source_language
             })
             for src, dst in route_pairs:
-                label = {"en": "영어", "ko": "한국어", "ja": "일본어"}.get(dst, dst)
+                label = language_name(dst)
                 progress(f"오프라인 번역 모델 확인: {src} → {label}")
                 translator.ensure_route(src, dst)
 
@@ -149,12 +150,10 @@ def process_songs(
         if target_langs and translator is None:
             raise RuntimeError("번역기가 초기화되지 않았습니다.")
 
-        label_of = {"en": "영어", "ko": "한국어", "ja": "일본어"}
-
         if target_langs and hasattr(translator, "translate_multi"):
             # Gemini 경로. 모든 언어를 API 호출 한 번으로 처리해 무료 등급의
             # 분당 요청 한도에 걸리는 일을 줄입니다. 곡당 3회 -> 1회.
-            names = " + ".join(label_of.get(l, l) for l in target_langs)
+            names = " + ".join(language_name(l) for l in target_langs)
             progress(f"[{idx}/{len(songs)}] {names} AI 자연번역: {song.title}")
             bundle = translator.translate_multi(
                 source_texts,
@@ -168,7 +167,7 @@ def process_songs(
         else:
             # Argos 등 한 언어씩 처리하는 엔진.
             for lang in target_langs:
-                label = label_of.get(lang, lang)
+                label = language_name(lang)
                 progress(f"[{idx}/{len(songs)}] {label} 오프라인 번역: {song.title}")
                 translated = translator.translate_many(
                     source_texts,

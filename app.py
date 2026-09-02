@@ -17,6 +17,7 @@ from lyriccap.parsers import parse_lyrics_file, SKIPPED_TRACKS
 from lyriccap.utils import discover_audio
 from lyriccap.matcher import match_audio
 from lyriccap.batch import process_songs, PROFILES, required_languages, JobCancelled
+from lyriccap.languages import SOURCE_LANGUAGES, language_name
 
 SYNC_MODE_LABELS = {
     "정밀 음악 싱크 (보컬 분리 + VAD, 권장)": "music_precise",
@@ -32,6 +33,8 @@ PROFILE_LABELS = {
     "ja": "일본어",
 }
 MODEL_CHOICES = ["tiny", "base", "small", "medium", "tiny.en", "base.en", "small.en", "medium.en"]
+# "가사 원문" 드롭다운. 코드만 보여주면 fr/es가 뭔지 알기 어려워 이름을 붙입니다.
+SOURCE_LANG_CHOICES = ["auto"] + [f"{c} ({language_name(c)})" for c in SOURCE_LANGUAGES]
 TRANSLATION_ENGINE_LABELS = {
     "AI 자연번역 (Gemini, 권장)": "gemini",
     "오프라인 빠른번역 (Argos, 직역 가능)": "argos",
@@ -111,8 +114,8 @@ class App(tk.Tk):
         opts = ttk.LabelFrame(self, text="자막/싱크 옵션")
         opts.pack(fill="x", padx=12, pady=(0, 8))
         ttk.Label(opts, text="가사 원문").grid(row=0, column=0, padx=8, pady=8)
-        ttk.Combobox(opts, textvariable=self.source_lang, state="readonly", width=10,
-                     values=["auto", "en", "ko", "ja"]).grid(row=0, column=1, padx=8, pady=8)
+        ttk.Combobox(opts, textvariable=self.source_lang, state="readonly", width=16,
+                     values=SOURCE_LANG_CHOICES).grid(row=0, column=1, padx=8, pady=8)
         ttk.Label(opts, text="정렬 모델").grid(row=0, column=2, padx=8, pady=8)
         ttk.Combobox(opts, textvariable=self.model_name, state="readonly", width=12,
                      values=MODEL_CHOICES).grid(row=0, column=3, padx=8, pady=8)
@@ -262,7 +265,7 @@ class App(tk.Tk):
         if not lyrics or not lyrics.exists():
             return
         try:
-            songs = parse_lyrics_file(lyrics, self.source_lang.get())
+            songs = parse_lyrics_file(lyrics, self._source_lang_code())
             audios = list(self.selected_audio_files) if self.selected_audio_files else (discover_audio(folder) if folder else [])
             self.songs = match_audio(songs, audios)
             self.tree.delete(*self.tree.get_children())
@@ -285,6 +288,10 @@ class App(tk.Tk):
                 self.status.set(f"가사 {len(self.songs)}곡 / 음원 매칭 {matched}곡")
         except Exception as e:
             messagebox.showerror("불러오기 오류", str(e))
+
+    def _source_lang_code(self) -> str:
+        """드롭다운의 "fr (프랑스어)" 표기에서 언어 코드만 꺼냅니다."""
+        return self.source_lang.get().split(" ", 1)[0].strip() or "auto"
 
     def _needs_translation(self, profiles: list[str]) -> bool:
         langs = required_languages(profiles)

@@ -10,6 +10,7 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Callable
 
+from .languages import CHARACTER_LANGUAGES, language_name, whisper_language
 from .models import Cue
 from .vocal_separator import DemucsSeparator, VocalSeparationError
 
@@ -195,6 +196,14 @@ class StableTSAligner:
         return self._align_from_result(result, lines, language, aligned_audio_label)
 
     def _transcribe(self, model, target_audio: Path, language: str):
+        # tiny.en/base.en 같은 영어 전용 모델은 language= 를 조용히 버리고
+        # 무조건 영어로 받아씁니다. 그대로 두면 불어 곡에서 원인을 알 수 없는
+        # 낮은 매칭률로만 나타나므로, 이유를 밝히고 멈춥니다.
+        if self.model_name.endswith(".en") and language not in (None, "en"):
+            raise AlignmentError(
+                f"'{self.model_name}'는 영어 전용 모델이라 {language_name(language)} 가사를 인식할 수 없습니다.\n"
+                "'정렬 모델'을 tiny/base/small/medium 중 하나로 바꿔 주세요."
+            )
 
         # 가사 원문을 initial_prompt로 넣지 않습니다.
         #
@@ -206,7 +215,11 @@ class StableTSAligner:
         prompt = None
 
         kwargs = dict(
-            language=language if language in {"en", "ko", "ja"} else None,
+            # 원문 언어를 그대로 넘깁니다. 예전에는 en/ko/ja만 통과시켜서
+            # 불어 가사는 language="en"으로 굳어졌고(파서가 en으로 되돌림),
+            # Whisper가 불어 노래를 영어로 받아쓰는 바람에 매칭률이 바닥이
+            # 났습니다. 모르는 언어는 None으로 두어 자동 감지에 맡깁니다.
+            language=whisper_language(language),
             word_timestamps=True,
             verbose=None,
             condition_on_previous_text=False,
@@ -263,7 +276,7 @@ class StableTSAligner:
 
         # A very low ratio means line timing would mostly be guesswork.  Stop
         # instead of generating another misleading SRT.
-        min_ratio = 0.16 if language == "ja" else 0.20
+        min_ratio = 0.16 if language in CHARACTER_LANGUAGES else 0.20
         if match_ratio < min_ratio:
             raise AlignmentError(
                 f"가사와 실제 보컬의 매칭률이 너무 낮습니다 ({match_ratio*100:.1f}%).\n"
@@ -302,7 +315,7 @@ class StableTSAligner:
 
     def _tokenize_text(self, text: str, language: str) -> list[str]:
         text = unicodedata.normalize("NFKC", text)
-        if language == "ja":
+        if language in CHARACTER_LANGUAGES:
             # Japanese Whisper word chunks are inconsistent. Character units
             # make the monotonic matcher much more stable across chunks.
             return [ch for ch in text if ch.isalnum()]
