@@ -5,6 +5,9 @@ from pathlib import Path
 from .models import Song
 from .utils import clean_lyrics
 
+# 가사가 비어 직전 파싱에서 제외된 곡 목록. app.py가 사용자에게 보여줍니다.
+SKIPPED_TRACKS: list[str] = []
+
 LANG_MAP = {
     "english": "en", "en": "en",
     "korean": "ko", "ko": "ko", "한국어": "ko",
@@ -13,6 +16,7 @@ LANG_MAP = {
 
 
 def parse_lyrics_file(path: Path, source_language: str = "auto") -> list[Song]:
+    SKIPPED_TRACKS.clear()
     if path.suffix.lower() == ".json":
         return parse_json(path, source_language)
     if path.suffix.lower() in {".txt", ".text"}:
@@ -37,6 +41,10 @@ def parse_json(path: Path, source_language: str = "auto") -> list[Song]:
             raw = item.get("lyrics", "")
             lines = clean_lyrics(raw if isinstance(raw, str) else "\n".join(map(str, raw)))
             if not lines:
+                # 조용히 건너뛰면 곡이 사라진 걸 눈치채기 어렵습니다.
+                no = item.get("trackNo") or i
+                title = str(item.get("title") or f"Track {i:02d}")
+                SKIPPED_TRACKS.append(f"{no}. {title}")
                 continue
             songs.append(Song(
                 track_no=int(item.get("trackNo") or i),

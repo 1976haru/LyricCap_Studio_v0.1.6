@@ -6,10 +6,22 @@ from typing import Callable
 from .aligner import StableTSAligner
 from .audio import audio_duration
 from .models import TrackResult
-from .srt import write_srt, write_combined
+from .srt import write_srt, write_combined, write_titles_srt
 from .translator import build_translator
 
 PROFILES = ["en", "en_ko", "en_ja", "ko", "ja"]
+
+
+class JobCancelled(RuntimeError):
+    """사용자가 중단 버튼을 눌렀을 때. 오류가 아니라 정상적인 종료입니다."""
+
+
+def _hhmmss(seconds: float) -> str:
+    ms = max(0, int(round(seconds * 1000)))
+    h, rem = divmod(ms, 3_600_000)
+    m, rem = divmod(rem, 60_000)
+    s, ms = divmod(rem, 1000)
+    return f"{h:02d}:{m:02d}:{s:02d}.{ms:03d}"
 
 
 def safe_name(text: str) -> str:
@@ -40,8 +52,18 @@ def process_songs(
     translation_model: str = "gemini-2.5-flash",
     sync_mode: str = "music_precise",
     refine_timestamps: bool = False,
+    should_cancel: Callable[[], bool] | None = None,
+    title_seconds: float = 5.0,
 ):
     progress = progress or (lambda _: None)
+    should_cancel = should_cancel or (lambda: False)
+
+    def check_cancel():
+        if should_cancel():
+            raise JobCancelled(
+                "사용자가 작업을 중단했습니다. "
+                "지금까지 분석/번역한 결과는 캐시에 남아 있어, 다시 실행하면 이어서 진행합니다."
+            )
     output_dir.mkdir(parents=True, exist_ok=True)
     aligner = StableTSAligner(
         model_name=model_name,
@@ -53,6 +75,7 @@ def process_songs(
     translator = None
     results: list[TrackResult] = []
     sync_report: list[dict] = []
+    duration_warnings: list[dict] = []
     langs_needed = required_languages(profiles)
 
     needs_translation = any(
@@ -66,6 +89,8 @@ def process_songs(
             output_dir / ".cache" / "translations.json",
             api_key=translation_api_key,
             model_name=translation_model,
+            progress=progress,
+            check_cancel=check_cancel,
         )
         if translation_engine == "argos":
             # Fail early and install offline packages before expensive alignment.
@@ -81,6 +106,7 @@ def process_songs(
                 translator.ensure_route(src, dst)
 
     for idx, song in enumerate(songs, 1):
+        check_cancel()
         if not song.audio_path:
             raise RuntimeError(f"{song.track_no:02d} {song.title}: 연결된 음원 파일이 없습니다.")
         sync_label = {
@@ -90,6 +116,7 @@ def process_songs(
         }.get(sync_mode, sync_mode)
         progress(f"[{idx}/{len(songs)}] 음원 분석/가사 정렬 ({sync_label}): {song.title}")
         cues = aligner.align(song.audio_path, song.lyrics, song.source_language)
+        check_cancel()
         if aligner.last_stats:
             st = aligner.last_stats
             extra = " / 라인 재구성" if st.rebuilt_from_words else ""
@@ -118,26 +145,64 @@ def process_songs(
             c.set_text(song.source_language, c.source)
 
         source_texts = [c.source for c in cues]
-        for lang in sorted(langs_needed):
-            if lang == song.source_language:
-                continue
-            if translator is None:
-                raise RuntimeError("번역기가 초기화되지 않았습니다.")
-            label = {"en": "영어", "ko": "한국어", "ja": "일본어"}[lang]
-            mode_label = "AI 자연번역" if translation_engine == "gemini" else "오프라인 번역"
-            progress(f"[{idx}/{len(songs)}] {label} {mode_label}: {song.title}")
-            translated = translator.translate_many(
+        target_langs = [l for l in sorted(langs_needed) if l != song.source_language]
+        if target_langs and translator is None:
+            raise RuntimeError("번역기가 초기화되지 않았습니다.")
+
+        label_of = {"en": "영어", "ko": "한국어", "ja": "일본어"}
+
+        if target_langs and hasattr(translator, "translate_multi"):
+            # Gemini 경로. 모든 언어를 API 호출 한 번으로 처리해 무료 등급의
+            # 분당 요청 한도에 걸리는 일을 줄입니다. 곡당 3회 -> 1회.
+            names = " + ".join(label_of.get(l, l) for l in target_langs)
+            progress(f"[{idx}/{len(songs)}] {names} AI 자연번역: {song.title}")
+            bundle = translator.translate_multi(
                 source_texts,
                 song.source_language,
-                lang,
+                target_langs,
                 title=song.title,
             )
-            for c, t in zip(cues, translated):
-                c.set_text(lang, t)
+            for lang in target_langs:
+                for c, t in zip(cues, bundle.get(lang, [])):
+                    c.set_text(lang, t)
+        else:
+            # Argos 등 한 언어씩 처리하는 엔진.
+            for lang in target_langs:
+                label = label_of.get(lang, lang)
+                progress(f"[{idx}/{len(songs)}] {label} 오프라인 번역: {song.title}")
+                translated = translator.translate_many(
+                    source_texts,
+                    song.source_language,
+                    lang,
+                    title=song.title,
+                )
+                for c, t in zip(cues, translated):
+                    c.set_text(lang, t)
 
         duration = audio_duration(song.audio_path)
-        if duration <= 0 and cues:
-            duration = max(c.end for c in cues)
+        duration_source = "audio-file"
+        if duration <= 0:
+            # 기존 버전은 여기서 조용히 "마지막 자막 끝시간"을 곡 길이로 썼습니다.
+            # 실제 곡에는 마지막 가사 뒤에 간주/아웃트로가 남아 있으므로 곡마다
+            # 수십 초씩 짧아지고, 그 오차가 통합 SRT에서 누적되어 뒤 곡의 자막이
+            # 전부 앞으로 밀립니다. 이제는 경고를 남겨 눈에 보이게 합니다.
+            duration = max((c.end for c in cues), default=0.0)
+            duration_source = "last-cue-end(부정확)"
+            duration_warnings.append({
+                "trackNo": song.track_no,
+                "title": song.title,
+                "audio": str(song.audio_path),
+                "fallbackDuration": round(duration, 3),
+            })
+            progress(
+                f"⚠ [{idx}/{len(songs)}] 경고: '{song.title}'의 음원 길이를 읽지 못했습니다. "
+                f"마지막 자막 끝({duration:.1f}초)으로 대체합니다. "
+                f"이 곡 이후의 통합 SRT 자막이 앞으로 밀릴 수 있습니다."
+            )
+
+        if sync_report and sync_report[-1].get("trackNo") == song.track_no:
+            sync_report[-1]["audioDuration"] = round(duration, 3)
+            sync_report[-1]["durationSource"] = duration_source
 
         track_dir = output_dir / "tracks"
         stem = f"{song.track_no:02d}_{safe_name(song.title)}"
@@ -148,6 +213,14 @@ def process_songs(
 
     diagnostics_dir = output_dir / "diagnostics"
     diagnostics_dir.mkdir(parents=True, exist_ok=True)
+    if translator is not None:
+        used_model = getattr(translator, "model_name", "")
+        if used_model and used_model != translation_model:
+            progress(
+                f"참고: 요청한 모델 '{translation_model}' 대신 '{used_model}'로 번역했습니다. "
+                f"이 이름을 'AI 모델' 칸에 넣으면 다음부터 바로 사용합니다."
+            )
+
     (diagnostics_dir / "sync_report.json").write_text(
         json.dumps(sync_report, ensure_ascii=False, indent=2),
         encoding="utf-8",
@@ -156,13 +229,54 @@ def process_songs(
     progress("통합 SRT 생성 중...")
     offset = 0.0
     tracks_with_offsets = []
+    title_tracks: list[tuple] = []
+    offset_report: list[dict] = []
     for r in results:
         tracks_with_offsets.append((r.cues, offset))
+        title_tracks.append((r.song, offset, r.duration))
+        offset_report.append({
+            "trackNo": r.song.track_no,
+            "title": r.song.title,
+            "audio": str(r.song.audio_path),
+            "startsAt": _hhmmss(offset),
+            "startsAtSeconds": round(offset, 3),
+            "durationSeconds": round(r.duration, 3),
+            "lastCueEndSeconds": round(max((c.end for c in r.cues), default=0.0), 3),
+            "trailingInstrumentalSeconds": round(
+                max(0.0, r.duration - max((c.end for c in r.cues), default=0.0)), 3
+            ),
+        })
         offset += r.duration + gap_seconds
+
+    (diagnostics_dir / "playlist_offsets.json").write_text(
+        json.dumps(
+            {
+                "gapSeconds": gap_seconds,
+                "totalSeconds": round(offset, 3),
+                "totalFormatted": _hhmmss(offset),
+                "durationWarnings": duration_warnings,
+                "tracks": offset_report,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
 
     combined_dir = output_dir / "combined"
     for profile in profiles:
         write_combined(combined_dir / f"PLAYLIST_{profile}.srt", tracks_with_offsets, profile)
 
-    progress("완료")
+    if title_seconds > 0:
+        progress("곡 제목 자막 생성 중...")
+        write_titles_srt(combined_dir / "PLAYLIST_titles.srt", title_tracks, title_seconds)
+
+    if duration_warnings:
+        names = ", ".join(w["title"] for w in duration_warnings[:5])
+        progress(
+            f"완료 (경고 {len(duration_warnings)}곡: {names} — 음원 길이를 읽지 못해 "
+            f"통합 SRT 싱크가 밀릴 수 있습니다)"
+        )
+    else:
+        progress("완료")
     return results

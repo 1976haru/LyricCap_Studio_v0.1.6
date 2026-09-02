@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 import re
 import unicodedata
@@ -112,6 +114,64 @@ class StableTSAligner:
             return audio_path, "original"
         raise ValueError(f"알 수 없는 싱크 모드: {self.sync_mode}")
 
+    @staticmethod
+    def _fingerprint(path: Path) -> str:
+        st = Path(path).stat()
+        raw = f"{Path(path).resolve()}|{st.st_size}|{st.st_mtime_ns}".encode("utf-8", "surrogatepass")
+        return hashlib.sha1(raw).hexdigest()[:16]
+
+    def _asr_cache_path(self, audio_path: Path, language: str) -> Path:
+        """음성인식 결과를 저장할 위치.
+
+        Whisper 인식은 곡당 수 분씩 걸리는 가장 비싼 단계인데 캐시가 없어서,
+        작업을 중단하고 다시 실행하면 처음부터 전부 다시 돌렸습니다.
+        음원 파일과 설정이 같으면 결과도 같으므로 저장해 두고 재사용합니다.
+        """
+        token = f"{self._fingerprint(audio_path)}_{self.model_name}_{self.sync_mode}_{language}"
+        return self.cache_dir / "asr" / f"{token}.json"
+
+    def _load_asr_cache(self, path: Path):
+        try:
+            if path.exists():
+                data = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(data, dict) and data.get("segments"):
+                    return data
+        except Exception:
+            pass
+        return None
+
+    def _save_asr_cache(self, path: Path, result) -> None:
+        try:
+            segments = result.get("segments", []) if isinstance(result, dict) else getattr(result, "segments", [])
+            plain = []
+            for seg in segments or []:
+                words = seg.get("words", []) if isinstance(seg, dict) else getattr(seg, "words", []) or []
+                plain.append({
+                    "start": float(seg.get("start", 0.0) if isinstance(seg, dict) else getattr(seg, "start", 0.0) or 0.0),
+                    "end": float(seg.get("end", 0.0) if isinstance(seg, dict) else getattr(seg, "end", 0.0) or 0.0),
+                    "text": str(seg.get("text", "") if isinstance(seg, dict) else getattr(seg, "text", "")),
+                    "words": [
+                        {
+                            "word": str(w.get("word", "") if isinstance(w, dict) else getattr(w, "word", "")),
+                            "start": float(w.get("start", 0.0) if isinstance(w, dict) else getattr(w, "start", 0.0) or 0.0),
+                            "end": float(w.get("end", 0.0) if isinstance(w, dict) else getattr(w, "end", 0.0) or 0.0),
+                            "probability": (
+                                float(w.get("probability")) if isinstance(w, dict) and w.get("probability") is not None
+                                else None
+                            ),
+                        }
+                        for w in words
+                    ],
+                })
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                json.dumps({"segments": plain}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+        except Exception:
+            # 캐시 저장 실패가 작업 전체를 막아서는 안 됩니다.
+            pass
+
     def align(self, audio_path: Path, lines: list[str], language: str = "en") -> list[Cue]:
         if not lines:
             return []
@@ -119,14 +179,31 @@ class StableTSAligner:
         if not audio_path.exists():
             raise AlignmentError(f"음원 파일을 찾을 수 없습니다: {audio_path}")
 
-        model = self._load()
-        target_audio, aligned_audio_label = self._prepare_audio(audio_path)
-        self.progress(f"보컬 음성인식 + 단어 타임스탬프 분석: {audio_path.name}")
+        cache_path = self._asr_cache_path(audio_path, language)
+        cached = self._load_asr_cache(cache_path)
+        if cached is not None:
+            self.progress(f"음성인식 캐시 사용: {audio_path.name}")
+            result = cached
+            aligned_audio_label = "cached"
+        else:
+            model = self._load()
+            target_audio, aligned_audio_label = self._prepare_audio(audio_path)
+            self.progress(f"보컬 음성인식 + 단어 타임스탬프 분석: {audio_path.name}")
+            result = self._transcribe(model, target_audio, language)
+            self._save_asr_cache(cache_path, result)
 
-        # A small prompt can help Whisper recognize title/lyric vocabulary, but
-        # it is deliberately capped so it does not become a fake transcript.
-        prompt = " ".join(lines)
-        prompt = prompt[:1200] if len(prompt) > 1200 else prompt
+        return self._align_from_result(result, lines, language, aligned_audio_label)
+
+    def _transcribe(self, model, target_audio: Path, language: str):
+
+        # 가사 원문을 initial_prompt로 넣지 않습니다.
+        #
+        # 이전 버전은 " ".join(lines)로 가사 전체를 Whisper에 미리 알려줬습니다.
+        # 그러면 Whisper는 실제로 뭐라고 불렀든 프롬프트의 가사를 그대로 받아쓰는
+        # 경향(환각)이 생깁니다. 결과적으로 가사-보컬 매칭률은 높게 나오지만
+        # 단어 타임스탬프는 실제 노래와 무관해집니다. 우리는 텍스트가 아니라
+        # '시간'만 필요하므로, 받아쓰기는 순수하게 오디오에만 근거해야 합니다.
+        prompt = None
 
         kwargs = dict(
             language=language if language in {"en", "ko", "ja"} else None,
@@ -166,6 +243,9 @@ class StableTSAligner:
                 f"원본 오류: {type(e).__name__}: {e}"
             ) from e
 
+        return result
+
+    def _align_from_result(self, result, lines: list[str], language: str, aligned_audio_label: str) -> list[Cue]:
         asr_units = self._extract_asr_units(result, language)
         if not asr_units:
             raise AlignmentError(

@@ -1,6 +1,6 @@
 from __future__ import annotations
 from pathlib import Path
-from .models import Cue
+from .models import Cue, Song
 
 
 def srt_time(seconds: float) -> str:
@@ -46,3 +46,30 @@ def write_combined(path: Path, tracks: list[tuple[list[Cue], float]], profile: s
             all_cues.append(shifted)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(render(all_cues, profile, 0.0), encoding="utf-8-sig")
+
+
+def title_card_text(song: Song) -> str:
+    label = f"{song.track_no:02d}. {song.title}"
+    localized = song.localized_title.strip()
+    if localized and localized != song.title:
+        label += f" ({localized})"
+    return label
+
+
+def write_titles_srt(
+    path: Path,
+    tracks: list[tuple[Song, float, float]],
+    display_seconds: float = 5.0,
+):
+    """곡이 시작할 때 곡 제목을 표시하는 별도 SRT를 만듭니다.
+
+    tracks: [(Song, offset, duration), ...]. offset/duration은 batch.py가
+    통합 SRT를 만들 때 쓰는 값을 그대로 재사용해야 가사 자막과 어긋나지 않습니다.
+    """
+    blocks = []
+    for i, (song, offset, duration) in enumerate(tracks, 1):
+        end = offset + min(display_seconds, duration)
+        text = title_card_text(song)
+        blocks.append(f"{i}\n{srt_time(offset)} --> {srt_time(end)}\n{text}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n\n".join(blocks) + ("\n" if blocks else ""), encoding="utf-8-sig")

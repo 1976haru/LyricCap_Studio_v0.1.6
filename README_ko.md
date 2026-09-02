@@ -126,7 +126,21 @@ output/
     PLAYLIST_en_ja.srt
     PLAYLIST_ko.srt
     PLAYLIST_ja.srt
+    PLAYLIST_titles.srt
 ```
+
+## 곡 제목 자막 (v0.1.8)
+
+`combined/PLAYLIST_titles.srt`는 가사와 별도로, 각 곡이 시작할 때 `01. 제목 (한글제목)` 형태로
+곡 제목을 표시하는 SRT입니다. CapCut에서 두 자막 트랙으로 나눠 올리세요.
+
+```
+combined/PLAYLIST_en.srt      → 가사 자막 (아래쪽 트랙)
+combined/PLAYLIST_titles.srt  → 곡 제목 자막 (위쪽 트랙)
+```
+
+`자막/싱크 옵션`의 `곡 제목 자막 표시(초)`로 표시 길이를 바꿀 수 있고(기본 5초),
+`0`으로 두면 이 파일을 만들지 않습니다. 곡 길이가 표시 시간보다 짧으면 곡 길이만큼만 표시됩니다.
 
 ## CapCut 통합 SRT의 전제
 

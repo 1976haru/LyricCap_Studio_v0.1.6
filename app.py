@@ -13,10 +13,10 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from lyriccap.parsers import parse_lyrics_file
+from lyriccap.parsers import parse_lyrics_file, SKIPPED_TRACKS
 from lyriccap.utils import discover_audio
 from lyriccap.matcher import match_audio
-from lyriccap.batch import process_songs, PROFILES, required_languages
+from lyriccap.batch import process_songs, PROFILES, required_languages, JobCancelled
 
 SYNC_MODE_LABELS = {
     "정밀 음악 싱크 (보컬 분리 + VAD, 권장)": "music_precise",
@@ -60,7 +60,7 @@ def save_settings(data: dict) -> None:
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("LyricCap Studio v0.1.7 - Demucs + Whisper ASR Anchor Sync + CapCut SRT")
+        self.title("LyricCap Studio v0.1.8 - Demucs + Whisper ASR Anchor Sync + CapCut SRT")
         self.geometry("1100x820")
         self.minsize(940, 700)
         self.songs = []
@@ -71,6 +71,7 @@ class App(tk.Tk):
         self.source_lang = tk.StringVar(value="auto")
         self.model_name = tk.StringVar(value="base")
         self.gap_seconds = tk.DoubleVar(value=0.0)
+        self.title_seconds = tk.DoubleVar(value=5.0)
         self.sync_mode_label = tk.StringVar(value="정밀 음악 싱크 (보컬 분리 + VAD, 권장)")
         self.refine_timestamps = tk.BooleanVar(value=False)
         self.profile_vars = {p: tk.BooleanVar(value=True) for p in PROFILES}
@@ -137,6 +138,14 @@ class App(tk.Tk):
             text="※ v0.1.7: stable-ts 강제정렬을 사용하지 않습니다. Demucs 보컬 분리 → OpenAI Whisper 단어 타임스탬프 → JSON/TXT 원문 가사와 순차 매칭하여 실제 보컬 시간을 잡습니다.",
         ).grid(row=1, column=4, columnspan=3, padx=8, pady=(0,8), sticky="w")
 
+        ttk.Label(opts, text="곡 제목 자막 표시(초)").grid(row=2, column=0, padx=8, pady=(0,8))
+        ttk.Spinbox(opts, from_=0, to=30, increment=0.5, textvariable=self.title_seconds, width=8).grid(row=2, column=1, padx=8, pady=(0,8))
+        ttk.Label(
+            opts,
+            text="0이면 곡 제목 SRT를 만들지 않습니다. combined/PLAYLIST_en.srt=가사(아래쪽 트랙), "
+                 "combined/PLAYLIST_titles.srt=곡 제목(위쪽 트랙)으로 CapCut에서 두 트랙으로 올리세요.",
+        ).grid(row=2, column=2, columnspan=5, padx=8, pady=(0,8), sticky="w")
+
         trans = ttk.LabelFrame(self, text="번역 - JSON/TXT에 번역문이 없어도 자동 생성")
         trans.pack(fill="x", padx=12, pady=(0, 8))
         ttk.Label(trans, text="번역 방식").grid(row=0, column=0, padx=8, pady=8, sticky="w")
@@ -191,6 +200,10 @@ class App(tk.Tk):
         ttk.Label(bottom, textvariable=self.status).pack(side="left")
         self.run_btn = ttk.Button(bottom, text="▶ 자막 전체 생성", command=self.start_process)
         self.run_btn.pack(side="right")
+        self.stop_btn = ttk.Button(bottom, text="■ 중단", command=self.stop_process, state="disabled")
+        self.stop_btn.pack(side="right", padx=(0, 6))
+        # 작업 스레드에 중단 의사를 전달하는 신호입니다.
+        self.cancel_event = threading.Event()
 
     def translation_engine(self) -> str:
         return TRANSLATION_ENGINE_LABELS.get(self.translation_engine_label.get(), "gemini")
@@ -256,7 +269,20 @@ class App(tk.Tk):
             for s in self.songs:
                 self.tree.insert("", "end", values=(s.track_no, s.title, s.audio_path.name if s.audio_path else "(없음)", len(s.lyrics)))
             matched = sum(bool(s.audio_path) for s in self.songs)
-            self.status.set(f"가사 {len(self.songs)}곡 / 음원 매칭 {matched}곡")
+            skipped = list(SKIPPED_TRACKS)
+            if skipped:
+                self.status.set(
+                    f"가사 {len(self.songs)}곡 / 음원 매칭 {matched}곡 "
+                    f"/ 가사 없어 제외 {len(skipped)}곡"
+                )
+                messagebox.showwarning(
+                    "가사가 비어 있는 곡",
+                    "아래 곡은 JSON에 가사 내용이 없어 목록에서 제외했습니다.\n\n"
+                    + "\n".join(skipped)
+                    + "\n\n원본 가사 파일을 확인해 주세요.",
+                )
+            else:
+                self.status.set(f"가사 {len(self.songs)}곡 / 음원 매칭 {matched}곡")
         except Exception as e:
             messagebox.showerror("불러오기 오류", str(e))
 
@@ -289,10 +315,23 @@ class App(tk.Tk):
             return
 
         self.save_translation_settings(silent=True)
+        self.cancel_event.clear()
         self.run_btn.config(state="disabled")
+        self.stop_btn.config(state="normal")
         self.progress.start(12)
         self.status.set("작업 시작... 정밀 음악 싱크는 보컬 분리/음원 분석 때문에 시간이 걸릴 수 있습니다.")
         threading.Thread(target=self._worker, args=(profiles,), daemon=True).start()
+
+    def stop_process(self):
+        """진행 중인 작업을 멈춥니다.
+
+        지금까지의 보컬 분리, 음성인식, 번역 결과는 캐시에 남으므로
+        다시 실행하면 끝난 곡은 건너뛰고 이어서 진행합니다.
+        """
+        if not self.cancel_event.is_set():
+            self.cancel_event.set()
+            self.stop_btn.config(state="disabled")
+            self.status.set("중단 요청됨... 진행 중인 단계를 정리하는 중입니다.")
 
     def _worker(self, profiles):
         try:
@@ -308,16 +347,28 @@ class App(tk.Tk):
                 translation_model=self.translation_model.get().strip() or "gemini-2.5-flash",
                 sync_mode=self.sync_mode(),
                 refine_timestamps=bool(self.refine_timestamps.get()),
+                should_cancel=self.cancel_event.is_set,
+                title_seconds=float(self.title_seconds.get()),
             )
             out = Path(self.output_folder.get())
             self.after(0, self._done, len(results), out)
+        except JobCancelled as e:
+            self.after(0, self._cancelled, str(e))
         except Exception as e:
             details = traceback.format_exc()
             self.after(0, self._failed, str(e), details)
 
+    def _cancelled(self, message):
+        self.progress.stop()
+        self.run_btn.config(state="normal")
+        self.stop_btn.config(state="disabled")
+        self.status.set("중단됨 - 다시 실행하면 이어서 진행합니다.")
+        messagebox.showinfo("중단됨", message)
+
     def _done(self, count, out):
         self.progress.stop()
         self.run_btn.config(state="normal")
+        self.stop_btn.config(state="disabled")
         self.status.set(f"완료: {count}곡")
         if messagebox.askyesno("완료", f"{count}곡 자막을 생성했습니다.\n\n{out}\n\n출력 폴더를 열까요?"):
             try:
@@ -328,6 +379,7 @@ class App(tk.Tk):
     def _failed(self, message, details):
         self.progress.stop()
         self.run_btn.config(state="normal")
+        self.stop_btn.config(state="disabled")
         self.status.set("오류 발생")
         log = ROOT / "error.log"
         log.write_text(details, encoding="utf-8")
