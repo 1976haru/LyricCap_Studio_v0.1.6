@@ -77,6 +77,13 @@ class DemucsSeparator:
         # packages predate that change. This compatibility variable only
         # applies when the caller did not explicitly set weights_only.
         env.setdefault("TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD", "1")
+        # Demucs prints the track name as it works. On Windows the child's
+        # stdout defaults to cp949, so a non-ASCII file name (La derniere
+        # nacelle) kills it with UnicodeEncodeError before separation ends.
+        # Our own encoding="utf-8" below only decodes what we receive, so the
+        # child has to be told to encode as UTF-8 in the first place.
+        env.setdefault("PYTHONIOENCODING", "utf-8")
+        env.setdefault("PYTHONUTF8", "1")
 
         try:
             proc = subprocess.run(
