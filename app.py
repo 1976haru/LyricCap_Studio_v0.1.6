@@ -235,6 +235,9 @@ class App(tk.Tk):
         p = filedialog.askopenfilename(filetypes=[("Lyrics", "*.json *.txt"), ("All files", "*.*")])
         if p:
             self.lyrics_path.set(p)
+            # 가사 파일이 있는 폴더를 출력 폴더의 기본값으로 자동 지정합니다.
+            self.output_folder.set(str(Path(p).parent))
+            self.status.set(f"출력 폴더 자동 설정: {Path(p).parent}")
             self.load_and_match()
 
     def choose_audio_files(self):
