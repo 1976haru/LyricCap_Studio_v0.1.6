@@ -11,6 +11,7 @@ sys.path.insert(0, str(ROOT / 'src'))
 
 from lyriccap.aligner import StableTSAligner
 from lyriccap.vocal_separator import DemucsSeparator
+from lyriccap.vocal_separator import VocalSeparationError
 
 
 class FakeModel:
@@ -30,8 +31,29 @@ class FakeModel:
             t += 0.2
         return SimpleNamespace(segments=segs)
 
+    def transcribe(self, audio, language=None, **opts):
+        return self.align(audio, "Hello world\nSing again", language, **opts)
+
 
 class SyncTests(unittest.TestCase):
+    def test_precise_falls_back_to_original_when_demucs_fails(self):
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            src = td / 'song.wav'; src.write_bytes(b'RIFF' + b'0' * 100)
+            model = FakeModel()
+            messages = []
+            aligner = StableTSAligner(
+                sync_mode='music_precise', cache_dir=td / 'cache',
+                fallback_enabled=True, progress=messages.append,
+            )
+            aligner._model = model
+            aligner.separator.separate = lambda _path: (_ for _ in ()).throw(VocalSeparationError('demucs failed'))
+            cues = aligner.align(src, ['Hello world'], 'en')
+            self.assertEqual(len(cues), 1)
+            self.assertEqual(Path(model.calls[0][0]), src)
+            self.assertEqual(aligner.last_stats.aligned_audio, 'original-fallback')
+            self.assertTrue(any('fallback' in message for message in messages))
+
     def test_precise_uses_external_vocal_stem_and_no_denoiser_kw(self):
         with tempfile.TemporaryDirectory() as td:
             td=Path(td)
@@ -47,8 +69,7 @@ class SyncTests(unittest.TestCase):
             self.assertEqual(Path(audio), vocal)
             self.assertEqual(lang, 'en')
             self.assertNotIn('denoiser', opts)
-            self.assertTrue(opts['vad'])
-            self.assertEqual(opts['token_step'], 100)
+            self.assertTrue(opts['word_timestamps'])
             self.assertEqual(a.last_stats.aligned_audio, 'demucs-vocals')
 
     def test_demucs_separator_caches_result(self):

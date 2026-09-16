@@ -76,6 +76,7 @@ class StableTSAligner:
         refine: bool = False,
         cache_dir: Path | None = None,
         progress: Callable[[str], None] | None = None,
+        fallback_enabled: bool = True,
     ):
         self.model_name = model_name
         self.device = device
@@ -84,6 +85,7 @@ class StableTSAligner:
         self._model = None
         self.last_stats: AlignmentStats | None = None
         self.progress = progress or (lambda _msg: None)
+        self.fallback_enabled = bool(fallback_enabled)
         self.cache_dir = Path(cache_dir or Path.cwd() / ".lyriccap_cache")
         self.separator = DemucsSeparator(self.cache_dir / "vocals", progress=self.progress)
 
@@ -110,6 +112,11 @@ class StableTSAligner:
             try:
                 return self.separator.separate(audio_path), "demucs-vocals"
             except VocalSeparationError as e:
+                if self.fallback_enabled:
+                    self.progress(
+                        f"Demucs 보컬 분리 실패: {e} / 원본 음원 Whisper fallback으로 계속합니다."
+                    )
+                    return audio_path, "original-fallback"
                 raise AlignmentError(str(e)) from e
         if self.sync_mode in {"music_fast", "voice"}:
             return audio_path, "original"
@@ -180,15 +187,15 @@ class StableTSAligner:
         if not audio_path.exists():
             raise AlignmentError(f"음원 파일을 찾을 수 없습니다: {audio_path}")
 
-        cache_path = self._asr_cache_path(audio_path, language)
+        # Keep original-mix fallback ASR separate from successful Demucs ASR.
+        target_audio, aligned_audio_label = self._prepare_audio(audio_path)
+        cache_path = self._asr_cache_path(target_audio, language)
         cached = self._load_asr_cache(cache_path)
         if cached is not None:
             self.progress(f"음성인식 캐시 사용: {audio_path.name}")
             result = cached
-            aligned_audio_label = "cached"
         else:
             model = self._load()
-            target_audio, aligned_audio_label = self._prepare_audio(audio_path)
             self.progress(f"보컬 음성인식 + 단어 타임스탬프 분석: {audio_path.name}")
             result = self._transcribe(model, target_audio, language)
             self._save_asr_cache(cache_path, result)

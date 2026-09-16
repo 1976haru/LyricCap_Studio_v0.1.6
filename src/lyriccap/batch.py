@@ -55,6 +55,7 @@ def process_songs(
     refine_timestamps: bool = False,
     should_cancel: Callable[[], bool] | None = None,
     title_seconds: float = 5.0,
+    fallback_enabled: bool = True,
 ):
     progress = progress or (lambda _: None)
     should_cancel = should_cancel or (lambda: False)
@@ -72,6 +73,7 @@ def process_songs(
         refine=refine_timestamps,
         cache_dir=output_dir / ".cache",
         progress=progress,
+        fallback_enabled=fallback_enabled,
     )
     translator = None
     results: list[TrackResult] = []

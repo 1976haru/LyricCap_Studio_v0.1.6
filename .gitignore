@@ -12,6 +12,7 @@ models/
 *.srt
 build/
 dist/
+.pytest_tmp/
 
 # Gemini API 키가 들어가는 로컬 설정. 저장소에 올리지 않습니다.
 translation_settings.json
