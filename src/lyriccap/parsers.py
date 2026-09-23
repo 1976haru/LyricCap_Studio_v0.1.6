@@ -2,7 +2,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from .languages import LANG_ALIASES, normalize_language
+from .languages import LANG_ALIASES, normalize_language, resolve_language, detect_language_from_text
 from .models import Song
 from .utils import clean_lyrics
 
@@ -23,13 +23,40 @@ def parse_lyrics_file(path: Path, source_language: str = "auto") -> list[Song]:
     raise ValueError("지원 형식은 JSON 또는 TXT입니다.")
 
 
+def _raw_lyrics_text(data) -> str:
+    """언어 감지에는 설명/메타가 아니라 실제 가사 필드만 사용합니다."""
+    chunks: list[str] = []
+    if not isinstance(data, dict):
+        return ""
+    songs_data = data.get("songs")
+    if isinstance(songs_data, list):
+        for item in songs_data:
+            if not isinstance(item, dict):
+                continue
+            raw = item.get("lyrics", "")
+            if isinstance(raw, str):
+                chunks.append(raw)
+            elif isinstance(raw, list):
+                chunks.extend(str(part) for part in raw)
+    raw = data.get("lyrics") or data.get("text") or data.get("lyric")
+    if isinstance(raw, str):
+        chunks.append(raw)
+    elif isinstance(raw, list):
+        chunks.extend(str(part) for part in raw)
+    return "\n".join(chunks)
+
+
 def parse_json(path: Path, source_language: str = "auto") -> list[Song]:
     data = json.loads(path.read_text(encoding="utf-8-sig"))
-    meta_lang = "en"
-    if isinstance(data, dict):
-        raw_lang = str(data.get("meta", {}).get("lyricLanguage", "english")).lower()
-        meta_lang = normalize_language(raw_lang, "en")
-    lang = meta_lang if source_language == "auto" else source_language
+    if source_language == "auto":
+        raw_lang = ""
+        if isinstance(data, dict):
+            meta = data.get("meta", {})
+            if isinstance(meta, dict):
+                raw_lang = str(meta.get("lyricLanguage", ""))
+        lang = resolve_language(raw_lang, _raw_lyrics_text(data), default="en")
+    else:
+        lang = normalize_language(source_language, source_language)
 
     songs_data = data.get("songs") if isinstance(data, dict) else None
     if isinstance(songs_data, list):
@@ -67,7 +94,11 @@ def parse_json(path: Path, source_language: str = "auto") -> list[Song]:
 
 def parse_txt(path: Path, source_language: str = "auto") -> list[Song]:
     text = path.read_text(encoding="utf-8-sig")
-    lang = "en" if source_language == "auto" else source_language
+    lang = (
+        detect_language_from_text(text, default="en")
+        if source_language == "auto"
+        else normalize_language(source_language, source_language)
+    )
 
     # Multi-track TXT format: lines like ### 01. Title or === 01 Title ===
     marker = re.compile(r"^(?:#{2,}|={2,})\s*(\d{1,3})[.)\-\s]+(.+?)(?:\s*=+)?$", re.M)
