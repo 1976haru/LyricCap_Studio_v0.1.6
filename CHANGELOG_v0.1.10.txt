@@ -1,0 +1,9 @@
+LyricCap Studio v0.1.10
+
+- 일본어 설명형 언어값 인식 수정
+  - 예: Japanese-dominant with sparse English code-switch → ja
+- 알 수 없는/비어 있는 meta.lyricLanguage는 실제 songs[].lyrics 문자권으로 재판정
+- 일본어 JSON/TXT 자동 감지 지원 강화
+- 일본어 원문 자막은 번역 없이 가사 그대로 유지
+- 잘못된 en fallback으로 Whisper가 일본어 음원을 영어 인식해 매칭률이 낮아지던 문제 수정
+- 설명형 메타, 일본어/한국어 문자 감지, 원문 보존 회귀 테스트 추가
