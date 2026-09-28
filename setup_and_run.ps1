@@ -137,7 +137,7 @@ try {
     Start-Transcript -Path $log -Append | Out-Null
     Clear-Host
     Write-Host '========================================================' -ForegroundColor Cyan
-    Write-Host ' LyricCap Studio v0.1.5 - Audio Sync Windows Setup' -ForegroundColor Cyan
+    Write-Host ' LyricCap Studio v0.1.7 - Sync Recovery Setup' -ForegroundColor Cyan
     Write-Host '========================================================' -ForegroundColor Cyan
     Write-Host 'This installer can install Python 3.12 and FFmpeg automatically.'
     Write-Host 'A setup log is saved as setup_log.txt.'

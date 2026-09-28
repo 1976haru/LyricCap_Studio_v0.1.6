@@ -31,6 +31,7 @@ if exist ".venv\Scripts\python.exe" (
   echo.
   echo [Python packages]
   ".venv\Scripts\python.exe" -c "import stable_whisper; print('stable-ts: OK')" 2^>nul || echo stable-ts: MISSING
+  ".venv\Scripts\python.exe" -c "import whisperx; print('WhisperX fallback: OK')" 2^>nul || echo WhisperX fallback: MISSING
   ".venv\Scripts\python.exe" -c "import demucs; print('demucs: OK')" 2^>nul || echo demucs: MISSING
   ".venv\Scripts\python.exe" -c "import torch; print('torch:', torch.__version__, 'CUDA:', torch.cuda.is_available())" 2^>nul || echo torch: MISSING
 ) else (

@@ -1,4 +1,6 @@
 openai-whisper==20250625
+stable-ts
 demucs
 argostranslate
 mutagen
+whisperx

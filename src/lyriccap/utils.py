@@ -34,13 +34,32 @@ def strip_section_tag(line: str) -> str:
 
 
 def clean_lyrics(raw: str) -> list[str]:
+    return clean_lyrics_with_metadata(raw)[0]
+
+
+_SECTION_TAG = re.compile(r"^\s*\[([^\]]+)\]\s*$")
+_INSTRUMENTAL_TAG = re.compile(r"\b(?:instrumental|inst\.?|間奏)\b", re.I)
+
+
+def clean_lyrics_with_metadata(raw: str) -> tuple[list[str], set[int]]:
+    """Return sung lyrics and the line boundaries carrying instrumental metadata.
+
+    A boundary value N means a declared instrumental section occurs after sung
+    lyric N-1 and before sung lyric N. Other section labels are ignored as
+    metadata but remain excluded from lyric counts.
+    """
     lines: list[str] = []
+    instrumental_after: set[int] = set()
     for line in raw.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
-        line = strip_section_tag(line)
+        tag = _SECTION_TAG.fullmatch(line)
+        if tag:
+            if _INSTRUMENTAL_TAG.search(tag.group(1)):
+                instrumental_after.add(len(lines))
+            continue
         line = re.sub(r"\s+", " ", line).strip()
         if line:
             lines.append(line)
-    return lines
+    return lines, instrumental_after
 
 
 def discover_audio(folder: Path) -> list[Path]:

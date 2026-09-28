@@ -1,4 +1,8 @@
-# LyricCap Studio v0.1.5
+# LyricCap Studio v0.1.7
+
+## v0.1.7 Sync Recovery
+
+곡마다 0초 기준으로 독립 정렬한 뒤 품질 게이트를 통과한 결과만 재생목록 SRT에 합칩니다. Primary 실패 곡만 재시도하고, 다시 실패하면 WhisperX 일본어 정렬 모델로 fallback합니다. 비정상적으로 긴 자막, 큰 timestamp 점프, 연속 초단축 자막, 순서/개수 변경, 트랙 범위 밖 timestamp는 정상 결과 저장을 차단합니다. 진단 결과는 `output/_diagnostics/sync_report.json`과 `sync_report.txt`에 기록됩니다.
 
 JSON/TXT의 정확한 가사 + WAV/MP3 음원을 넣으면 **실제 음원을 분석해 가사 타이밍을 잡고**, 영어/한국어/일본어 SRT를 만들어 CapCut에 바로 가져오는 Windows 데스크톱 앱입니다.
 

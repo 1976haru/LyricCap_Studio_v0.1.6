@@ -14,6 +14,9 @@ class Song:
     source_language: str = "en"
     audio_path: Optional[Path] = None
     localized_title: str = ""
+    # Sung-line indices after which an explicit instrumental section appears.
+    # Section labels are metadata and are never sent to an aligner as lyrics.
+    instrumental_after: set[int] = field(default_factory=set)
 
 
 @dataclass
@@ -44,3 +47,7 @@ class TrackResult:
     cues: list[Cue] = field(default_factory=list)
     duration: float = 0.0
     warning: str = ""
+    state: str = "PENDING"
+    engine: str = ""
+    retry_count: int = 0
+    quality_score: float = 0.0

@@ -10,6 +10,7 @@ models/
 *.wav
 *.mp3
 *.srt
+!tests/fixtures/*.srt
 build/
 dist/
 .pytest_tmp/

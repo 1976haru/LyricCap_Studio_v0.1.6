@@ -71,7 +71,7 @@ def save_settings(data: dict) -> None:
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("LyricCap Studio v0.1.9 - Five-job Queue + Safe Whisper Fallback")
+        self.title("LyricCap Studio v0.1.7 - Sync Recovery")
         self.geometry("1100x960")
         self.minsize(940, 700)
         self.songs = []
@@ -247,6 +247,9 @@ class App(tk.Tk):
         self.run_btn.pack(side="right")
         self.stop_btn = ttk.Button(bottom, text="■ 중단", command=self.stop_process, state="disabled")
         self.stop_btn.pack(side="right", padx=(0, 6))
+        ttk.Button(bottom, text="싱크 진단 보고서 열기", command=self.open_sync_report).pack(
+            side="right", padx=(0, 6)
+        )
         # 작업 스레드에 중단 의사를 전달하는 신호입니다.
         self.cancel_event = threading.Event()
 
@@ -598,6 +601,16 @@ class App(tk.Tk):
             self.cancel_event.set()
             self.stop_btn.config(state="disabled")
             self.status.set("중단 요청됨... 진행 중인 단계를 정리하는 중입니다.")
+
+    def open_sync_report(self):
+        report = Path(self.output_folder.get()) / "_diagnostics" / "sync_report.txt"
+        if not report.exists():
+            messagebox.showinfo("싱크 진단", "아직 생성된 싱크 진단 보고서가 없습니다.")
+            return
+        try:
+            os.startfile(report)
+        except Exception as exc:
+            messagebox.showerror("싱크 진단", f"보고서를 열지 못했습니다.\n{report}\n\n{exc}")
 
     def _worker(self, profiles):
         try:
