@@ -17,6 +17,7 @@ class Song:
     # Sung-line indices after which an explicit instrumental section appears.
     # Section labels are metadata and are never sent to an aligner as lyrics.
     instrumental_after: set[int] = field(default_factory=set)
+    speaker_roles: dict[int, str] = field(default_factory=dict)
 
 
 @dataclass

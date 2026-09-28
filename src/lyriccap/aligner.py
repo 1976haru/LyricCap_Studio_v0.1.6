@@ -461,6 +461,7 @@ class StableTSAligner:
         line_unit_counts: list[int],
         asr_units: list[_TimedUnit],
         mapping: dict[int, int],
+        allow_interpolation: bool = False,
     ) -> list[Cue]:
         per_line: list[list[tuple[int, int]]] = [[] for _ in lines]
         for src_idx, asr_idx in mapping.items():
@@ -479,6 +480,12 @@ class StableTSAligner:
         if not anchor_ids:
             raise AlignmentError(
                 "Whisper는 보컬을 인식했지만 가사 줄과 연결되는 확실한 지점을 찾지 못했습니다."
+            )
+
+        if not allow_interpolation and len(anchor_ids) != len(lines):
+            missing = [str(index + 1) for index, value in enumerate(raw) if value is None]
+            raise AlignmentError(
+                "Direct acoustic evidence missing for source lyric line(s): " + ", ".join(missing)
             )
 
         # Estimate a conservative seconds-per-token from anchored lines.
@@ -549,7 +556,8 @@ class StableTSAligner:
             prev_end = cue.end
         return cues
 
-    def _cues_from_result(self, result, lines: list[str], language: str):
+    def _cues_from_result(self, result, lines: list[str], language: str,
+                          allow_interpolation: bool = False):
         """Compatibility helper for older LyricCap tests/tools.
 
         Converts an already timestamped ASR result into exact source-line cues
@@ -568,6 +576,7 @@ class StableTSAligner:
         cues = self._build_line_cues(
             lines=lines, language=language, source_units=source_units,
             line_unit_counts=counts, asr_units=asr_units, mapping=mapping,
+            allow_interpolation=allow_interpolation,
         )
         segs = result.get("segments", []) if isinstance(result, dict) else getattr(result, "segments", []) or []
         rebuilt = len(segs) != len(lines)

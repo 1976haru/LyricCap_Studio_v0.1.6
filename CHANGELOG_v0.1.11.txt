@@ -1,0 +1,9 @@
+LyricCap Studio v0.1.11 - Acoustic Truth Sync
+
+- Replaced interpolated FINAL lyric timing with WhisperX exact-source CTC alignment.
+- Added per-line acoustic evidence and strict evidence quality gates.
+- Added PASS_WITH_WARNINGS so timing-shape warnings do not block valid playlists.
+- Kept translation separate from source-language master timing.
+- Removed speaker-role prefixes from alignment text while retaining metadata.
+- Added run manifests, output hashes, engine/version identification, and offset details.
+- Preserved the v0.1.9 five-job queue and v0.1.10 Japanese language behavior.

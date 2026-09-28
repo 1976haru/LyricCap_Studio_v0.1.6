@@ -1,5 +1,9 @@
-from .base import AlignmentResult, BaseAligner
+from .base import AlignmentEvidence, AlignmentResult, BaseAligner, LineAlignmentEvidence
 from .stable_ts_aligner import StableTSAdapter
-from .whisperx_aligner import WhisperXAligner
+from .whisperx_exact_aligner import WhisperXExactAligner
 
-__all__ = ["AlignmentResult", "BaseAligner", "StableTSAdapter", "WhisperXAligner"]
+WhisperXAligner = WhisperXExactAligner
+
+__all__ = ["AlignmentEvidence", "AlignmentResult", "BaseAligner",
+           "LineAlignmentEvidence", "StableTSAdapter", "WhisperXExactAligner",
+           "WhisperXAligner"]

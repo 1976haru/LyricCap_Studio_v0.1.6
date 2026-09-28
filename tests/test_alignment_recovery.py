@@ -69,7 +69,7 @@ def test_fifteen_track_dry_run_aligns_each_track_once(tmp_path):
     fallback = FakeAligner([], "fallback")
     results = process_songs(songs, tmp_path / "output", ["ja"],
                             primary_aligner=primary, retry_aligner=retry,
-                            fallback_aligner=fallback, title_seconds=0)
+                            fallback_aligner=fallback, title_seconds=0, strict=False)
     assert len(results) == 15
     assert primary.calls == 15
     assert retry.calls == fallback.calls == 0

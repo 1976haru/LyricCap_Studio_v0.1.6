@@ -3,10 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from .base import AlignmentResult
+from .whisperx_exact_aligner import WhisperXExactAligner
 from ..aligner import AlignmentError, StableTSAligner
 
 
-class WhisperXAligner:
+class LegacyWhisperXDiagnosticAligner:
     DEFAULT_JA_MODEL = "jonatasgrosman/wav2vec2-large-xlsr-53-japanese"
 
     def __init__(self, model_name: str = "base", device: str = "auto", progress=None,
@@ -59,3 +60,7 @@ class WhisperXAligner:
         ]
         return AlignmentResult(cues=cues, engine="whisperx", confidences=probabilities,
                                metadata={"alignment_model": self.DEFAULT_JA_MODEL if language == "ja" else "default"})
+
+
+# Backward-compatible import name now resolves to the exact-source authority.
+WhisperXAligner = WhisperXExactAligner

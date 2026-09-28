@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import random
 
-from .base import AlignmentResult
+from .base import AlignmentEvidence, AlignmentResult, LineAlignmentEvidence
 from ..aligner import AlignmentError
 
 
@@ -67,10 +67,38 @@ class StableTSAdapter:
             raise AlignmentError(f"stable-ts exact alignment failed: {type(exc).__name__}: {exc}") from exc
         if aligned is None:
             raise AlignmentError("stable-ts exact alignment returned no result")
-        cues, _rebuilt = self.aligner._cues_from_result(aligned, lyric_lines, language)
+        # stable-ts was given the exact source text. Accept only directly
+        # timestamped source units; the legacy fill_block path is forbidden.
+        asr_units = self.aligner._extract_asr_units(aligned, language)
+        source_units, counts = self.aligner._make_source_units(lyric_lines, language)
+        mapping, _matched = self.aligner._global_align(source_units, asr_units)
+        cues, _rebuilt = self.aligner._cues_from_result(
+            aligned, lyric_lines, language, allow_interpolation=False
+        )
+        per_line = [[] for _ in lyric_lines]
+        for source_index, asr_index in mapping.items():
+            per_line[source_units[source_index].line_index].append(asr_units[asr_index])
+        line_evidence = []
+        for index, units in enumerate(per_line):
+            total = counts[index]
+            scores = [u.probability for u in units if u.probability is not None]
+            line_evidence.append(LineAlignmentEvidence(
+                index, bool(units), len(units), total, len(units) / max(1, total),
+                sum(scores) / len(scores) if scores else None,
+                units[0].start if units else None, units[-1].end if units else None,
+                "stable-ts-exact-direct", False,
+            ))
+        direct = sum(item.direct for item in line_evidence)
+        evidence = AlignmentEvidence(
+            len(source_units), len(mapping), len(mapping) / max(1, len(source_units)),
+            direct, direct / max(1, len(lyric_lines)), 0, 0.0, 0,
+            bool(line_evidence and line_evidence[0].direct),
+            bool(line_evidence and line_evidence[-1].direct), line_evidence,
+        )
         return AlignmentResult(
             cues=cues,
             engine="stable-ts-exact-retry" if self.retry else "stable-ts-exact",
             confidences=[],
             metadata={"retry": self.retry},
+            evidence=evidence,
         )

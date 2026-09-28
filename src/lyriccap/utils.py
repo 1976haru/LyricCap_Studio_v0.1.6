@@ -39,6 +39,10 @@ def clean_lyrics(raw: str) -> list[str]:
 
 _SECTION_TAG = re.compile(r"^\s*\[([^\]]+)\]\s*$")
 _INSTRUMENTAL_TAG = re.compile(r"\b(?:instrumental|inst\.?|間奏)\b", re.I)
+_SPEAKER_PREFIX = re.compile(
+    r"^(Male|Female|Man|Woman|Duet|Lead|Backing|Male Vocal|Female Vocal)\s*:\s*",
+    re.I,
+)
 
 
 def clean_lyrics_with_metadata(raw: str) -> tuple[list[str], set[int]]:
@@ -48,8 +52,15 @@ def clean_lyrics_with_metadata(raw: str) -> tuple[list[str], set[int]]:
     lyric N-1 and before sung lyric N. Other section labels are ignored as
     metadata but remain excluded from lyric counts.
     """
+    lines, instrumental_after, _speaker_roles = clean_lyrics_with_details(raw)
+    return lines, instrumental_after
+
+
+def clean_lyrics_with_details(raw: str) -> tuple[list[str], set[int], dict[int, str]]:
+    """Strip non-sung metadata while retaining it separately."""
     lines: list[str] = []
     instrumental_after: set[int] = set()
+    speaker_roles: dict[int, str] = {}
     for line in raw.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
         tag = _SECTION_TAG.fullmatch(line)
         if tag:
@@ -57,9 +68,15 @@ def clean_lyrics_with_metadata(raw: str) -> tuple[list[str], set[int]]:
                 instrumental_after.add(len(lines))
             continue
         line = re.sub(r"\s+", " ", line).strip()
+        speaker = _SPEAKER_PREFIX.match(line)
+        if speaker:
+            role = speaker.group(1)
+            line = line[speaker.end():].strip()
+            if line:
+                speaker_roles[len(lines)] = role
         if line:
             lines.append(line)
-    return lines, instrumental_after
+    return lines, instrumental_after, speaker_roles
 
 
 def discover_audio(folder: Path) -> list[Path]:

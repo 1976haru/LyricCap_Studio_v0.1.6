@@ -4,6 +4,7 @@ import os
 import sys
 import threading
 import traceback
+import subprocess
 from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
@@ -22,6 +23,13 @@ from lyriccap.job_queue import (
     QueueJob, QueueManager, QueueLimitError, DuplicateJobError,
     WAITING, RUNNING, COMPLETED, FAILED, CANCELLED,
 )
+
+try:
+    _GIT_SHA = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT,
+                              capture_output=True, text=True, timeout=3).stdout.strip() or "unknown"
+except Exception:
+    _GIT_SHA = "unknown"
+print(f"LyricCap Studio v0.1.11 git={_GIT_SHA} sync_pipeline=acoustic_truth_v1")
 
 SYNC_MODE_LABELS = {
     "정밀 음악 싱크 (보컬 분리 + VAD, 권장)": "music_precise",
@@ -71,7 +79,7 @@ def save_settings(data: dict) -> None:
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("LyricCap Studio v0.1.7 - Sync Recovery")
+        self.title("LyricCap Studio v0.1.11 - Acoustic Truth Sync")
         self.geometry("1100x960")
         self.minsize(940, 700)
         self.songs = []
@@ -150,7 +158,7 @@ class App(tk.Tk):
         ).grid(row=1, column=2, columnspan=2, padx=8, pady=(0,8), sticky="w")
         ttk.Label(
             opts,
-            text="※ v0.1.7: stable-ts 강제정렬을 사용하지 않습니다. Demucs 보컬 분리 → OpenAI Whisper 단어 타임스탬프 → JSON/TXT 원문 가사와 순차 매칭하여 실제 보컬 시간을 잡습니다.",
+            text="※ v0.1.11: 원문 가사를 WhisperX CTC로 직접 정렬하며 음향 근거 없는 줄은 FINAL에 넣지 않습니다.",
         ).grid(row=1, column=4, columnspan=3, padx=8, pady=(0,8), sticky="w")
 
         ttk.Label(opts, text="곡 제목 자막 표시(초)").grid(row=2, column=0, padx=8, pady=(0,8))
@@ -243,6 +251,7 @@ class App(tk.Tk):
         self.progress.pack(fill="x", pady=(0, 6))
         self.status = tk.StringVar(value="JSON/TXT와 음원을 선택하세요.")
         ttk.Label(bottom, textvariable=self.status).pack(side="left")
+        ttk.Label(bottom, text="Version: v0.1.11  |  Sync engine: WhisperX Exact Source / Demucs  |  Translation: Gemini / Argos / None").pack(side="bottom")
         self.run_btn = ttk.Button(bottom, text="▶ 자막 전체 생성", command=self.start_process)
         self.run_btn.pack(side="right")
         self.stop_btn = ttk.Button(bottom, text="■ 중단", command=self.stop_process, state="disabled")
@@ -524,6 +533,7 @@ class App(tk.Tk):
             refine_timestamps=job.refine_timestamps,
             should_cancel=self.cancel_event.is_set, title_seconds=job.title_seconds,
             fallback_enabled=job.fallback_enabled,
+            lyrics_file=job.lyrics_path,
         )
 
     def _queue_progress_update(self, no, total, job, message):
@@ -629,6 +639,7 @@ class App(tk.Tk):
                 should_cancel=self.cancel_event.is_set,
                 title_seconds=float(self.title_seconds.get()),
                 fallback_enabled=bool(self.fallback_enabled.get()),
+                lyrics_file=Path(self.lyrics_path.get()),
             )
             out = Path(self.output_folder.get())
             self.after(0, self._done, len(results), out)

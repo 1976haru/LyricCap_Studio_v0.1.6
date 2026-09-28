@@ -5,6 +5,7 @@ from statistics import median
 from typing import Iterable
 
 from .models import Cue
+from .aligners.base import AlignmentEvidence
 
 
 @dataclass(frozen=True)
@@ -32,9 +33,22 @@ class SyncQualityReport:
     def hard_failed(self) -> bool:
         return any(issue.severity == "HARD" for issue in self.issues)
 
+    @property
+    def has_warnings(self) -> bool:
+        return any(issue.severity != "HARD" for issue in self.issues)
+
+    @property
+    def status(self) -> str:
+        if self.hard_failed:
+            return "FAIL"
+        return "PASS_WITH_WARNINGS" if self.has_warnings else "PASS"
+
     def to_dict(self) -> dict:
         return {
             "passed": self.passed,
+            "hard_failed": self.hard_failed,
+            "has_warnings": self.has_warnings,
+            "status": self.status,
             "score": self.score,
             "issues": [issue.to_dict() for issue in self.issues],
             "stats": self.stats,
@@ -60,12 +74,15 @@ def evaluate_sync_quality(
     *,
     instrumental_after: set[int] | None = None,
     confidences: Iterable[float] | None = None,
+    evidence: AlignmentEvidence | None = None,
+    language: str = "en",
+    strict: bool = False,
+    vocal_activity_ranges: Iterable[tuple[float, float]] | None = None,
 ) -> SyncQualityReport:
     """Validate local (track-relative) timestamps before any SRT is written.
 
-    Soft findings deliberately make ``passed`` false so the transaction retries
-    the track. A lone 0.4--0.5 second rap line is only a soft finding and does
-    not become a hard failure unless it is part of a pathological run.
+    Timing shape is advisory. In strict mode, direct acoustic evidence is the
+    authority; warnings do not trigger retries or block playlist output.
     """
     cues = list(cues)
     instrumental_after = set(instrumental_after or ())
@@ -87,12 +104,16 @@ def evaluate_sync_quality(
         duration = cue.end - cue.start
         if cue.end <= cue.start:
             issues.append(_issue("NON_POSITIVE_DURATION", "HARD", i, cue, "cue end is not after start"))
+        line_ev = evidence.line_evidence[i] if evidence and i < len(evidence.line_evidence) else None
+        weak = line_ev is None or not line_ev.direct or line_ev.coverage < 0.5
         if duration < 0.18:
-            issues.append(_issue("INSTANT_CUE", "HARD", i, cue, "cue is shorter than 0.18 seconds"))
+            issues.append(_issue("INSTANT_CUE", "HARD" if weak else "SOFT", i, cue,
+                                 "cue is shorter than 0.18 seconds"))
         elif duration < 0.55:
             issues.append(_issue("SHORT_CUE", "SOFT", i, cue, "cue is shorter than 0.55 seconds"))
         if duration > 10.0:
-            issues.append(_issue("EXTREME_DURATION", "HARD", i, cue, "lyric cue exceeds 10 seconds"))
+            issues.append(_issue("EXTREME_DURATION", "HARD" if weak else "SOFT", i, cue,
+                                 "lyric cue exceeds 10 seconds"))
         elif duration > 7.0:
             issues.append(_issue("LONG_CUE", "SOFT", i, cue, "lyric cue exceeds 7 seconds"))
         if cue.start < 0 or (track_duration > 0 and cue.end > track_duration + 0.01):
@@ -105,15 +126,58 @@ def evaluate_sync_quality(
             if overlap > 0.30:
                 issues.append(_issue("OVERLAP", "HARD", i, cue, f"overlap is {overlap:.2f} seconds"))
             start_gap = cue.start - previous.start
-            if start_gap > 12.0 and i not in instrumental_after:
-                issues.append(_issue("START_GAP", "HARD", i, cue, f"consecutive start gap is {start_gap:.2f} seconds"))
+            if start_gap > 12.0:
+                activity_known = vocal_activity_ranges is not None
+                activity = list(vocal_activity_ranges or ())
+                gap_has_vocal = any(a < cue.start and b > previous.end for a, b in activity)
+                explained = (i in instrumental_after and activity_known and not gap_has_vocal
+                             and (evidence is None or not weak))
+                if not explained:
+                    pathological_neighbor = (previous.end - previous.start > 10.0
+                                             or cue.end - cue.start < 0.18)
+                    issues.append(_issue("START_GAP", "HARD" if gap_has_vocal or (strict and weak)
+                                         or pathological_neighbor else "SOFT", i, cue,
+                                         f"consecutive start gap is {start_gap:.2f} seconds"))
 
     run = 0
     for i, duration in enumerate(durations):
         run = run + 1 if duration < 0.55 else 0
         if run == 3:
-            issues.append(_issue("SHORT_CUE_RUN", "HARD", i, cues[i],
+            window = evidence.line_evidence[i - 2:i + 1] if evidence else []
+            low = not window or any(not item.direct or item.coverage < 0.5 for item in window)
+            issues.append(_issue("SHORT_CUE_RUN", "HARD" if low else "SOFT", i, cues[i],
                                  "three or more consecutive cues are shorter than 0.55 seconds"))
+
+    if strict:
+        if evidence is None:
+            issues.append(_issue("ACOUSTIC_EVIDENCE_MISSING", "HARD", None, None,
+                                 "exact acoustic alignment evidence is missing"))
+        else:
+            threshold = 0.65 if language in {"ja", "ko"} else 0.75
+            checks = (
+                (evidence.interpolated_line_count > 0, "INTERPOLATED_FINAL_CUE", "FINAL cues contain interpolation"),
+                (evidence.direct_line_ratio < 0.95, "LOW_DIRECT_LINE_RATIO",
+                 f"direct line ratio is {evidence.direct_line_ratio:.1%}"),
+                (not evidence.first_line_direct, "FIRST_LINE_NOT_DIRECT", "first sung line has no direct evidence"),
+                (not evidence.last_line_direct, "LAST_LINE_NOT_DIRECT", "last sung line has no direct evidence"),
+                (evidence.unit_coverage < threshold, "LOW_SOURCE_UNIT_COVERAGE",
+                 f"source unit coverage is {evidence.unit_coverage:.1%}; required {threshold:.0%}"),
+            )
+            for failed, code, message in checks:
+                if failed:
+                    issues.append(_issue(code, "HARD", None, None, message))
+            missing_run = 0
+            for item in evidence.line_evidence:
+                missing_run = 0 if item.direct else missing_run + 1
+                if missing_run >= 2:
+                    issues.append(_issue("MISSING_DIRECT_LINE_RUN", "HARD", item.line_index, None,
+                                         "two or more consecutive lines lack direct evidence"))
+                    break
+            # A strict FINAL cannot serialize a source line without a direct
+            # timestamp even when the aggregate ratio happens to be 95%.
+            if any(not item.direct for item in evidence.line_evidence):
+                issues.append(_issue("SOURCE_LINE_NOT_DIRECT", "HARD", None, None,
+                                     "one or more source lines lack direct acoustic evidence"))
 
     short_count = sum(duration < 0.55 for duration in durations)
     over_7 = sum(duration > 7.0 for duration in durations)
@@ -162,4 +226,5 @@ def evaluate_sync_quality(
         "count_over_10": over_10,
         "max_consecutive_start_gap": max(gaps, default=0.0),
     }
-    return SyncQualityReport(passed=not issues, score=round(score, 1), issues=issues, stats=stats)
+    hard_failed = any(issue.severity == "HARD" for issue in issues)
+    return SyncQualityReport(passed=not hard_failed, score=round(score, 1), issues=issues, stats=stats)

@@ -16,6 +16,7 @@ class TrackAlignmentState(str, Enum):
     ALIGNING_FALLBACK = "ALIGNING_FALLBACK"
     VALIDATING_FALLBACK = "VALIDATING_FALLBACK"
     PASS = "PASS"
+    PASS_WITH_WARNINGS = "PASS_WITH_WARNINGS"
     FAIL = "FAIL"
 
 
@@ -35,11 +36,12 @@ def _exception_report(exc: Exception) -> SyncQualityReport:
 
 
 class TrackAlignmentTransaction:
-    def __init__(self, primary, retry_aligner, fallback, progress=None):
+    def __init__(self, primary, retry_aligner, fallback, progress=None, strict: bool = False):
         self.primary = primary
         self.retry_aligner = retry_aligner
         self.fallback = fallback
         self.progress = progress or (lambda _message: None)
+        self.strict = bool(strict)
 
     def run(self, *, audio_path: Path, lyric_lines: list[str], language: str,
             track_duration: float, instrumental_after: set[int] | None = None) -> TrackAlignmentOutcome:
@@ -63,13 +65,18 @@ class TrackAlignmentTransaction:
                     last_result.cues, lyric_lines, track_duration,
                     instrumental_after=instrumental_after,
                     confidences=last_result.confidences,
+                    evidence=last_result.evidence,
+                    language=language,
+                    strict=self.strict,
                 )
             except Exception as exc:
                 last_result = None
                 last_report = _exception_report(exc)
             if last_report.passed:
-                history.append(TrackAlignmentState.PASS.value)
-                return TrackAlignmentOutcome(TrackAlignmentState.PASS, last_result, last_report,
+                state = (TrackAlignmentState.PASS_WITH_WARNINGS if last_report.has_warnings
+                         else TrackAlignmentState.PASS)
+                history.append(state.value)
+                return TrackAlignmentOutcome(state, last_result, last_report,
                                              retry_count, history)
         history.append(TrackAlignmentState.FAIL.value)
         return TrackAlignmentOutcome(TrackAlignmentState.FAIL, None, last_report, 2, history)
