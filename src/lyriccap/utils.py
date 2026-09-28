@@ -58,14 +58,39 @@ def clean_lyrics_with_metadata(raw: str) -> tuple[list[str], set[int]]:
 
 def clean_lyrics_with_details(raw: str) -> tuple[list[str], set[int], dict[int, str]]:
     """Strip non-sung metadata while retaining it separately."""
+    lines, instrumental_after, speaker_roles, _sections = clean_lyrics_with_structure(raw)
+    return lines, instrumental_after, speaker_roles
+
+
+def clean_lyrics_with_structure(raw: str):
+    """Return lyrics plus structural sections; section labels never become cues."""
+    from .models import LyricSection
     lines: list[str] = []
     instrumental_after: set[int] = set()
     speaker_roles: dict[int, str] = {}
+    sections: list[LyricSection] = []
+    current_name = "Lyrics"
+    current_start = 0
+    preceding_break = None
+
+    def close_section(next_break=None):
+        nonlocal current_start
+        if len(lines) > current_start:
+            sections.append(LyricSection(current_name, current_name.casefold(), current_start,
+                                         len(lines) - 1, preceding_break, next_break))
+        current_start = len(lines)
+
     for line in raw.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
         tag = _SECTION_TAG.fullmatch(line)
         if tag:
-            if _INSTRUMENTAL_TAG.search(tag.group(1)):
+            label = re.sub(r"\s+", " ", tag.group(1)).strip()
+            if _INSTRUMENTAL_TAG.search(label) or re.search(r"\b(?:break|interlude|intro|outro)\b", label, re.I):
+                close_section(label)
                 instrumental_after.add(len(lines))
+                preceding_break = label
+            else:
+                close_section()
+                current_name = label
             continue
         line = re.sub(r"\s+", " ", line).strip()
         speaker = _SPEAKER_PREFIX.match(line)
@@ -76,7 +101,10 @@ def clean_lyrics_with_details(raw: str) -> tuple[list[str], set[int], dict[int, 
                 speaker_roles[len(lines)] = role
         if line:
             lines.append(line)
-    return lines, instrumental_after, speaker_roles
+    close_section()
+    if not sections and lines:
+        sections.append(LyricSection("Lyrics", "lyrics", 0, len(lines) - 1))
+    return lines, instrumental_after, speaker_roles, sections
 
 
 def discover_audio(folder: Path) -> list[Path]:

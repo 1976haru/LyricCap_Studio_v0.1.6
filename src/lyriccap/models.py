@@ -6,6 +6,20 @@ from typing import Optional
 from .languages import TARGET_LANGUAGES
 
 
+@dataclass(frozen=True)
+class LyricSection:
+    name: str
+    section_type: str
+    first_line_index: int
+    last_line_index: int
+    preceding_break: str | None = None
+    following_break: str | None = None
+
+    @property
+    def is_sung(self) -> bool:
+        return self.first_line_index >= 0 and self.last_line_index >= self.first_line_index
+
+
 @dataclass
 class Song:
     track_no: int
@@ -18,6 +32,7 @@ class Song:
     # Section labels are metadata and are never sent to an aligner as lyrics.
     instrumental_after: set[int] = field(default_factory=set)
     speaker_roles: dict[int, str] = field(default_factory=dict)
+    sections: list[LyricSection] = field(default_factory=list)
 
 
 @dataclass

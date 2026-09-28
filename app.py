@@ -29,7 +29,7 @@ try:
                               capture_output=True, text=True, timeout=3).stdout.strip() or "unknown"
 except Exception:
     _GIT_SHA = "unknown"
-print(f"LyricCap Studio v0.1.11 git={_GIT_SHA} sync_pipeline=acoustic_truth_v1")
+print(f"LyricCap Studio v0.1.12 git={_GIT_SHA} sync_pipeline=acoustic_truth_v2_exact_recovery")
 
 SYNC_MODE_LABELS = {
     "정밀 음악 싱크 (보컬 분리 + VAD, 권장)": "music_precise",
@@ -79,7 +79,7 @@ def save_settings(data: dict) -> None:
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("LyricCap Studio v0.1.11 - Acoustic Truth Sync")
+        self.title("LyricCap Studio v0.1.12 - Exact Recovery Sync")
         self.geometry("1100x960")
         self.minsize(940, 700)
         self.songs = []
@@ -158,7 +158,7 @@ class App(tk.Tk):
         ).grid(row=1, column=2, columnspan=2, padx=8, pady=(0,8), sticky="w")
         ttk.Label(
             opts,
-            text="※ v0.1.11: 원문 가사를 WhisperX CTC로 직접 정렬하며 음향 근거 없는 줄은 FINAL에 넣지 않습니다.",
+            text="※ v0.1.12: WhisperX 정확 원문 전체/섹션/복구 정렬을 사용하며 보간 줄을 FINAL에 넣지 않습니다.",
         ).grid(row=1, column=4, columnspan=3, padx=8, pady=(0,8), sticky="w")
 
         ttk.Label(opts, text="곡 제목 자막 표시(초)").grid(row=2, column=0, padx=8, pady=(0,8))
@@ -251,12 +251,15 @@ class App(tk.Tk):
         self.progress.pack(fill="x", pady=(0, 6))
         self.status = tk.StringVar(value="JSON/TXT와 음원을 선택하세요.")
         ttk.Label(bottom, textvariable=self.status).pack(side="left")
-        ttk.Label(bottom, text="Version: v0.1.11  |  Sync engine: WhisperX Exact Source / Demucs  |  Translation: Gemini / Argos / None").pack(side="bottom")
+        ttk.Label(bottom, text="Version: v0.1.12  |  Sync engine: WhisperX Exact Recovery / Demucs  |  Translation: selected engine").pack(side="bottom")
         self.run_btn = ttk.Button(bottom, text="▶ 자막 전체 생성", command=self.start_process)
         self.run_btn.pack(side="right")
         self.stop_btn = ttk.Button(bottom, text="■ 중단", command=self.stop_process, state="disabled")
         self.stop_btn.pack(side="right", padx=(0, 6))
         ttk.Button(bottom, text="싱크 진단 보고서 열기", command=self.open_sync_report).pack(
+            side="right", padx=(0, 6)
+        )
+        ttk.Button(bottom, text="실패 곡만 다시 정렬", command=self.retry_failed_tracks).pack(
             side="right", padx=(0, 6)
         )
         # 작업 스레드에 중단 의사를 전달하는 신호입니다.
@@ -621,6 +624,38 @@ class App(tk.Tk):
             os.startfile(report)
         except Exception as exc:
             messagebox.showerror("싱크 진단", f"보고서를 열지 못했습니다.\n{report}\n\n{exc}")
+
+    def retry_failed_tracks(self):
+        """Run section/recovery only for FAIL tracks recorded by the last run."""
+        if self._queue_running or self._single_running:
+            return
+        self.load_and_match()
+        manifest = Path(self.output_folder.get()) / "_diagnostics" / "run_manifest.json"
+        if not manifest.exists():
+            messagebox.showwarning("재시도", "이전 실행 보고서가 없습니다.")
+            return
+        profiles = [p for p, value in self.profile_vars.items() if value.get()]
+        self.cancel_event.clear()
+        self._single_running = True
+        self.progress.start(12)
+        self.run_btn.config(state="disabled")
+        threading.Thread(target=self._retry_worker, args=(profiles,), daemon=True).start()
+
+    def _retry_worker(self, profiles):
+        try:
+            results = process_songs(
+                self.songs, Path(self.output_folder.get()), profiles,
+                model_name=self.model_name.get(), gap_seconds=float(self.gap_seconds.get()),
+                progress=lambda msg: self.after(0, self.status.set, msg),
+                translation_engine=self.translation_engine(),
+                translation_api_key=self.gemini_api_key.get().strip(),
+                translation_model=self.translation_model.get().strip() or "gemini-2.5-flash",
+                sync_mode=self.sync_mode(), should_cancel=self.cancel_event.is_set,
+                title_seconds=float(self.title_seconds.get()), retry_failed_only=True,
+                lyrics_file=Path(self.lyrics_path.get()))
+            self.after(0, self._done, len(results), Path(self.output_folder.get()))
+        except Exception as exc:
+            self.after(0, self._failed, str(exc), traceback.format_exc())
 
     def _worker(self, profiles):
         try:

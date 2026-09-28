@@ -4,7 +4,7 @@ import re
 from pathlib import Path
 from .languages import LANG_ALIASES, normalize_language, resolve_language, detect_language_from_text
 from .models import Song
-from .utils import clean_lyrics, clean_lyrics_with_details, clean_lyrics_with_metadata
+from .utils import clean_lyrics, clean_lyrics_with_details, clean_lyrics_with_metadata, clean_lyrics_with_structure
 
 # 가사가 비어 직전 파싱에서 제외된 곡 목록. app.py가 사용자에게 보여줍니다.
 SKIPPED_TRACKS: list[str] = []
@@ -65,7 +65,7 @@ def parse_json(path: Path, source_language: str = "auto") -> list[Song]:
             if not isinstance(item, dict):
                 continue
             raw = item.get("lyrics", "")
-            lines, instrumental_after, speaker_roles = clean_lyrics_with_details(
+            lines, instrumental_after, speaker_roles, sections = clean_lyrics_with_structure(
                 raw if isinstance(raw, str) else "\n".join(map(str, raw))
             )
             if not lines:
@@ -82,6 +82,7 @@ def parse_json(path: Path, source_language: str = "auto") -> list[Song]:
                 source_language=lang,
                 instrumental_after=instrumental_after,
                 speaker_roles=speaker_roles,
+                sections=sections,
             ))
         if songs:
             return songs
@@ -90,11 +91,11 @@ def parse_json(path: Path, source_language: str = "auto") -> list[Song]:
     if isinstance(data, dict):
         raw = data.get("lyrics") or data.get("text") or data.get("lyric")
         if raw:
-            lines, instrumental_after, speaker_roles = clean_lyrics_with_details(
+            lines, instrumental_after, speaker_roles, sections = clean_lyrics_with_structure(
                 raw if isinstance(raw, str) else "\n".join(map(str, raw))
             )
             return [Song(1, str(data.get("title") or path.stem), lines, lang,
-                         instrumental_after=instrumental_after, speaker_roles=speaker_roles)]
+                         instrumental_after=instrumental_after, speaker_roles=speaker_roles, sections=sections)]
 
     raise ValueError("JSON에서 songs[].lyrics 또는 lyrics/text 필드를 찾지 못했습니다.")
 
@@ -115,15 +116,15 @@ def parse_txt(path: Path, source_language: str = "auto") -> list[Song]:
         for idx, m in enumerate(matches):
             body_start = m.end()
             body_end = matches[idx + 1].start() if idx + 1 < len(matches) else len(text)
-            lines, instrumental_after, speaker_roles = clean_lyrics_with_details(text[body_start:body_end])
+            lines, instrumental_after, speaker_roles, sections = clean_lyrics_with_structure(text[body_start:body_end])
             if lines:
                 songs.append(Song(int(m.group(1)), m.group(2).strip(), lines, lang,
-                                  instrumental_after=instrumental_after, speaker_roles=speaker_roles))
+                                  instrumental_after=instrumental_after, speaker_roles=speaker_roles, sections=sections))
         if songs:
             return songs
 
-    lines, instrumental_after, speaker_roles = clean_lyrics_with_details(text)
+    lines, instrumental_after, speaker_roles, sections = clean_lyrics_with_structure(text)
     if not lines:
         raise ValueError("TXT에 가사가 없습니다.")
     return [Song(1, path.stem, lines, lang, instrumental_after=instrumental_after,
-                 speaker_roles=speaker_roles)]
+                 speaker_roles=speaker_roles, sections=sections)]

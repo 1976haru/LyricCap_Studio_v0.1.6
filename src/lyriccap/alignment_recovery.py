@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+import inspect
+from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 
@@ -21,12 +22,42 @@ class TrackAlignmentState(str, Enum):
 
 
 @dataclass
+class AlignmentAttemptRecord:
+    attempt_no: int
+    engine: str
+    mode: str
+    status: str
+    error_type: str | None = None
+    error_message: str | None = None
+    report: SyncQualityReport | None = None
+    metadata: dict = field(default_factory=dict)
+
+    def to_dict(self):
+        return {
+            "attempt_no": self.attempt_no, "engine": self.engine, "mode": self.mode,
+            "status": self.status, "error_type": self.error_type,
+            "error_message": self.error_message,
+            "report": None if self.report is None else self.report.to_dict(),
+            "metadata": self.metadata,
+        }
+
+
+@dataclass
 class TrackAlignmentOutcome:
     state: TrackAlignmentState
-    result: AlignmentResult | None
-    report: SyncQualityReport
-    retry_count: int
+    final_result: AlignmentResult | None
+    final_report: SyncQualityReport
+    attempts: list[AlignmentAttemptRecord]
     history: list[str]
+
+    @property
+    def result(self): return self.final_result
+
+    @property
+    def report(self): return self.final_report
+
+    @property
+    def retry_count(self): return max(0, len(self.attempts) - 1)
 
 
 def _exception_report(exc: Exception) -> SyncQualityReport:
@@ -36,47 +67,66 @@ def _exception_report(exc: Exception) -> SyncQualityReport:
 
 
 class TrackAlignmentTransaction:
-    def __init__(self, primary, retry_aligner, fallback, progress=None, strict: bool = False):
-        self.primary = primary
-        self.retry_aligner = retry_aligner
-        self.fallback = fallback
+    """Exact-only authority chain. Every failed attempt remains reportable."""
+
+    def __init__(self, primary, section_aligner, recovery_aligner, progress=None,
+                 strict: bool = False):
+        self.aligners = ((primary, "WHOLE_TRACK"),
+                         (section_aligner, "SECTION_WINDOWS"),
+                         (recovery_aligner, "FAILED_SECTION_ONLY"))
         self.progress = progress or (lambda _message: None)
         self.strict = bool(strict)
 
+    @staticmethod
+    def _call(aligner, audio_path, lyric_lines, language, bounds, sections, previous_result):
+        params = inspect.signature(aligner.align).parameters
+        kwargs = {"bounds": bounds}
+        if "sections" in params:
+            kwargs["sections"] = sections
+        if "previous_result" in params:
+            kwargs["previous_result"] = previous_result
+        return aligner.align(audio_path, lyric_lines, language, **kwargs)
+
     def run(self, *, audio_path: Path, lyric_lines: list[str], language: str,
-            track_duration: float, instrumental_after: set[int] | None = None) -> TrackAlignmentOutcome:
+            track_duration: float, instrumental_after: set[int] | None = None,
+            sections=None, start_stage: int = 1) -> TrackAlignmentOutcome:
         history = [TrackAlignmentState.PENDING.value]
-        attempts = (
-            (TrackAlignmentState.ALIGNING_PRIMARY, TrackAlignmentState.VALIDATING_PRIMARY, self.primary, 0),
-            (TrackAlignmentState.RETRYING, TrackAlignmentState.VALIDATING_PRIMARY, self.retry_aligner, 1),
-            (TrackAlignmentState.ALIGNING_FALLBACK, TrackAlignmentState.VALIDATING_FALLBACK, self.fallback, 2),
-        )
-        last_result = None
+        records = []
+        previous_result = None
         last_report = SyncQualityReport(False, 0.0, [], {})
-        for aligning, validating, aligner, retry_count in attempts:
+        state_names = (TrackAlignmentState.ALIGNING_PRIMARY,
+                       TrackAlignmentState.RETRYING,
+                       TrackAlignmentState.ALIGNING_FALLBACK)
+        for index, ((aligner, mode), aligning) in enumerate(zip(self.aligners, state_names), 1):
+            if index < start_stage:
+                continue
             history.append(aligning.value)
             self.progress(aligning.value)
+            result = None
+            error = None
             try:
-                # Rejected timestamps are intentionally not passed to the next attempt.
-                last_result = aligner.align(audio_path, lyric_lines, language,
-                                            bounds=(0.0, track_duration))
-                history.append(validating.value)
+                result = self._call(aligner, audio_path, lyric_lines, language,
+                                    (0.0, track_duration), sections, previous_result)
                 last_report = evaluate_sync_quality(
-                    last_result.cues, lyric_lines, track_duration,
-                    instrumental_after=instrumental_after,
-                    confidences=last_result.confidences,
-                    evidence=last_result.evidence,
-                    language=language,
-                    strict=self.strict,
-                )
+                    result.cues, lyric_lines, track_duration,
+                    instrumental_after=instrumental_after, confidences=result.confidences,
+                    evidence=result.evidence, language=language, strict=self.strict)
             except Exception as exc:
-                last_result = None
+                error = exc
                 last_report = _exception_report(exc)
-            if last_report.passed:
+            engine = getattr(result, "engine", None) or getattr(aligner, "engine", None)
+            engine = engine or type(aligner).__name__
+            records.append(AlignmentAttemptRecord(
+                index, engine, mode, last_report.status,
+                None if error is None else type(error).__name__,
+                None if error is None else str(error), last_report,
+                dict(result.metadata) if result else {}))
+            if last_report.passed and result is not None:
                 state = (TrackAlignmentState.PASS_WITH_WARNINGS if last_report.has_warnings
                          else TrackAlignmentState.PASS)
                 history.append(state.value)
-                return TrackAlignmentOutcome(state, last_result, last_report,
-                                             retry_count, history)
+                return TrackAlignmentOutcome(state, result, last_report, records, history)
+            if result is not None:
+                previous_result = result
         history.append(TrackAlignmentState.FAIL.value)
-        return TrackAlignmentOutcome(TrackAlignmentState.FAIL, None, last_report, 2, history)
+        return TrackAlignmentOutcome(TrackAlignmentState.FAIL, None, last_report, records, history)

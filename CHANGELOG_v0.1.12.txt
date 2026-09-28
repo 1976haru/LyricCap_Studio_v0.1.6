@@ -1,0 +1,8 @@
+LyricCap Studio v0.1.12 - Exact Recovery Sync
+
+- Preserves a structured diagnostic record for every exact-alignment attempt.
+- Replaces automatic stable-ts forced alignment with WhisperX exact section and failed-section recovery.
+- Retains lyric section structure and uses bounded, monotonic section windows.
+- Translates and caches all source lines before alignment, including tracks awaiting sync recovery.
+- Prevents incomplete combined playlists while retaining successful track SRTs and pending translations.
+- Uses acoustic_truth_v2_exact_recovery cache identity.

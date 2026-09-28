@@ -53,7 +53,7 @@ class WhisperXExactAligner:
                     digest.update(chunk)
             return digest.hexdigest()
         payload = "\0".join((
-            "acoustic_truth_v1", fingerprint(audio_path), fingerprint(vocals_path),
+            "acoustic_truth_v2_exact_recovery", fingerprint(audio_path), fingerprint(vocals_path),
             hashlib.sha256("\n".join(lyric_lines).encode("utf-8")).hexdigest(),
             language, align_model, str(bool(strict)),
         ))
@@ -160,12 +160,18 @@ class WhisperXExactAligner:
         if device == "auto":
             device = "cuda" if torch.cuda.is_available() else "cpu"
         target = Path(self.audio_resolver(Path(audio_path))) if self.audio_resolver else Path(audio_path)
-        duration = bounds[1] if bounds and bounds[1] > 0 else audio_duration(target)
+        track_duration = audio_duration(target)
+        window_start = max(0.0, float(bounds[0])) if bounds else 0.0
+        window_end = min(track_duration, float(bounds[1])) if bounds else track_duration
+        duration = window_end - window_start
         if duration <= 0:
             raise AlignmentError("Track duration could not be measured for exact alignment")
         self.progress(f"WhisperX exact-source CTC: {target.name}")
         try:
             audio = whisperx.load_audio(str(target))
+            if bounds and (window_start > 0 or window_end < track_duration):
+                sample_rate = 16000
+                audio = audio[int(window_start * sample_rate):int(window_end * sample_rate)]
             kwargs = {"language_code": language, "device": device}
             if language == "ja":
                 kwargs["model_name"] = self.DEFAULT_JA_MODEL
@@ -178,9 +184,20 @@ class WhisperXExactAligner:
         except Exception as exc:
             raise AlignmentError(f"WhisperX exact-source alignment failed: {type(exc).__name__}: {exc}") from exc
         result = self.result_from_aligned(aligned, lyric_lines, language)
+        if window_start:
+            for cue in result.cues:
+                cue.start += window_start
+                cue.end += window_start
+            if result.evidence:
+                for item in result.evidence.line_evidence:
+                    if item.start is not None:
+                        item.start += window_start
+                    if item.end is not None:
+                        item.end += window_start
         result.metadata.update({
             "alignment_model": self.DEFAULT_JA_MODEL if language == "ja" else "whisperx-default",
-            "aligned_audio": str(target), "pipeline_version": "acoustic_truth_v1",
+            "aligned_audio": str(target), "pipeline_version": "acoustic_truth_v2_exact_recovery",
+            "window": [window_start, window_end],
             "alignment_cache_key": self.alignment_cache_key(
                 Path(audio_path), target, lyric_lines, language,
                 self.DEFAULT_JA_MODEL if language == "ja" else "whisperx-default", self.strict,
