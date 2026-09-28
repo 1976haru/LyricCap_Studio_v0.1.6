@@ -1,10 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 from typing import Protocol
 
 from ..models import Cue
+
+
+class TimeBase(str, Enum):
+    TRACK_ABSOLUTE = "track_absolute"
+    SECTION_LOCAL = "section_local"
 
 
 @dataclass
@@ -43,6 +49,9 @@ class AlignmentResult:
     confidences: list[float] = field(default_factory=list)
     metadata: dict = field(default_factory=dict)
     evidence: AlignmentEvidence | None = None
+    time_base: TimeBase = TimeBase.TRACK_ABSOLUTE
+    window_start: float = 0.0
+    window_end: float = 0.0
 
 
 class BaseAligner(Protocol):

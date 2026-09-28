@@ -19,8 +19,13 @@ from .srt import write_combined, write_srt, write_titles_srt
 from .translator import build_translator
 
 PROFILES = ["en", "en_ko", "en_ja", "ko", "ja"]
-APP_VERSION = "v0.1.12"
-PIPELINE_VERSION = "acoustic_truth_v2_exact_recovery"
+APP_VERSION = "v0.1.13"
+PIPELINE_VERSION = "acoustic_truth_v3_timebase_safe"
+
+TIMEBASE_FAILURE_CODES = {
+    "SECTION_TIMEBASE_CONFLICT", "SECTION_NOT_REBASED", "SECTION_DOUBLE_REBASE",
+    "SECTION_OUTSIDE_WINDOW", "SECTION_WINDOW_CONFLICT",
+}
 
 
 class JobCancelled(RuntimeError):
@@ -37,6 +42,21 @@ def _hhmmss(seconds: float) -> str:
 
 def safe_name(text: str) -> str:
     return re.sub(r'[\\/:*?"<>|]+', "_", text).strip().strip(".")[:120] or "track"
+
+
+def _popup_reason(primary: dict, fallback: str) -> str:
+    code = primary.get("code")
+    message = primary.get("message", "")
+    overlap = re.search(r"([0-9]+(?:\.[0-9]+)?) seconds", message)
+    amount = f"({overlap.group(1)}초 중첩)" if overlap else ""
+    labels = {
+        "SECTION_TIMEBASE_CONFLICT": "섹션 시간축 충돌",
+        "SECTION_NOT_REBASED": "섹션 절대시간 변환 누락",
+        "SECTION_DOUBLE_REBASE": "섹션 시간 오프셋 중복 적용",
+        "SECTION_OUTSIDE_WINDOW": "섹션 검색 구간 이탈",
+        "SECTION_WINDOW_CONFLICT": "섹션 검색 구간 충돌",
+    }
+    return labels.get(code, message or fallback) + amount
 
 
 def required_languages(profiles: list[str]) -> set[str]:
@@ -60,6 +80,12 @@ def _read_srt(path: Path) -> list[Cue]:
 
 def _diagnostic_entry(song, duration, outcome) -> dict:
     evidence = outcome.result.evidence if outcome.result else None
+    all_issues = [issue for attempt in outcome.attempts
+                  for issue in (attempt.report.issues if attempt.report else [])]
+    primary = next((issue for issue in all_issues if issue.code in TIMEBASE_FAILURE_CODES),
+                   next((issue for issue in outcome.report.issues if issue.severity == "HARD"), None))
+    section_records = [record for attempt in outcome.attempts
+                       for record in attempt.metadata.get("section_records", [])]
     return {
         "track_no": song.track_no, "title": song.title,
         "duration": round(duration, 3),
@@ -72,6 +98,8 @@ def _diagnostic_entry(song, duration, outcome) -> dict:
         **outcome.report.stats,
         "issues": [issue.to_dict() for issue in outcome.report.issues],
         "status": outcome.report.status,
+        "primary_failure": None if primary is None else primary.to_dict(),
+        "sections": section_records,
         "direct_line_ratio": None if evidence is None else evidence.direct_line_ratio,
         "unit_coverage": None if evidence is None else evidence.unit_coverage,
         "failed_line_indices": sorted({issue.cue_index for attempt in outcome.attempts
@@ -110,8 +138,17 @@ def _write_diagnostics(output_dir: Path, report: list[dict]) -> Path:
     )
     lines: list[str] = []
     for item in report:
+        primary = item.get("primary_failure")
+        primary_text = "" if not primary else f" {primary['code']}: {primary['message']}"
         lines.append(f"{item['track_no']:02d} {item['state']} {item['engine']} "
-                     f"score={item['quality_score']:.0f} {item['title']}")
+                     f"score={item['quality_score']:.0f} {item['title']}{primary_text}")
+        for section in item.get("sections", []):
+            lines.append(
+                f"  {section['section_name']} lines={section['source_start_line']}..{section['source_end_line']} "
+                f"local={section['first_local_time']}..{section['last_local_time']} "
+                f"window={section['window_start_abs']}..{section['window_end_abs']} "
+                f"rebased={section['first_absolute_time']}..{section['last_absolute_time']} "
+                f"offset={section['rebase_offset']} stitch={section['stitch_status']}")
         for attempt in item["attempts"]:
             detail = attempt["error_message"]
             if not detail and attempt["report"] and attempt["report"]["issues"]:
@@ -172,6 +209,14 @@ def process_songs(
             raise RuntimeError("The previous run has no failed tracks")
         previous_report = list(previous.get("tracks", []))
         songs = [song for song in all_songs if song.track_no in failed_numbers]
+        # Only versioned/derived timing artifacts are invalidated. Vocals, ASR
+        # diagnostics and translations live in sibling caches and remain intact.
+        derived = output_dir / ".cache" / "alignment" / "derived"
+        if derived.exists():
+            for song in songs:
+                for path in derived.glob(f"{song.track_no:02d}_*"):
+                    if path.is_file():
+                        path.unlink()
     legacy = StableTSAligner(model_name=model_name, sync_mode=sync_mode,
                              refine=refine_timestamps, cache_dir=output_dir / ".cache",
                              progress=progress, fallback_enabled=fallback_enabled)
@@ -235,7 +280,10 @@ def process_songs(
                                   sections=song.sections,
                                   start_stage=2 if retry_failed_only else 1)
         report.append(_diagnostic_entry(song, duration, outcome))
-        detail = ", ".join(issue.message for issue in outcome.report.issues[:3])
+        entry = report[-1]
+        primary_failure = entry.get("primary_failure")
+        detail = primary_failure["message"] if primary_failure else ", ".join(
+            issue.message for issue in outcome.report.issues[:1])
         progress(f"{song.track_no:02d} {outcome.state.value} score {outcome.report.score:.0f}" +
                  (f" - {detail}" if detail else ""))
         if outcome.state not in {TrackAlignmentState.PASS, TrackAlignmentState.PASS_WITH_WARNINGS} or outcome.result is None:
@@ -298,12 +346,15 @@ def process_songs(
         progress(f"Sync PASS: {len(results)} | Sync FAIL: {len(failures)} | "
                  f"Translation cached: {translation_cached}/{len(songs)} | "
                  f"Combined SRT: Waiting for {len(failures)} tracks")
-        descriptions = "; ".join(
-            f"{failed.song.track_no}번 곡 {failed.song.title}: {failed.warning or 'alignment failed'}"
-            for failed in failures
-        )
-        raise RuntimeError(f"Sync validation failed; normal playlist SRT was not created. "
-                           f"{descriptions}. See {diagnostics / 'sync_report.txt'}")
+        failed_by_number = {item["track_no"]: item for item in report if item["state"] == "FAIL"}
+        descriptions = []
+        for failed in failures:
+            item = failed_by_number.get(failed.song.track_no, {})
+            primary = item.get("primary_failure") or {}
+            reason = _popup_reason(primary, failed.warning or "정렬 복구 실패")
+            descriptions.append(f"{failed.song.track_no:02d} {failed.song.title} — {reason}")
+        raise RuntimeError(f"{len(all_songs)}곡 중 {len(all_songs) - len(failures)}곡 정상 / "
+                           f"{len(failures)}곡 복구 필요\n" + "\n".join(descriptions))
 
     if retry_failed_only:
         for profile in profiles + ["source"]:

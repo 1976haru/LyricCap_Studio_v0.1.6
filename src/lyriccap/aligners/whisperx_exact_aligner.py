@@ -6,7 +6,8 @@ import math
 import unicodedata
 from pathlib import Path
 
-from .base import AlignmentEvidence, AlignmentResult, LineAlignmentEvidence
+from .base import AlignmentEvidence, AlignmentResult, LineAlignmentEvidence, TimeBase
+from ..section_timebase import rebase_alignment_result
 from ..aligner import AlignmentError
 from ..audio import audio_duration
 from ..models import Cue
@@ -53,7 +54,7 @@ class WhisperXExactAligner:
                     digest.update(chunk)
             return digest.hexdigest()
         payload = "\0".join((
-            "acoustic_truth_v2_exact_recovery", fingerprint(audio_path), fingerprint(vocals_path),
+            "acoustic_truth_v3_timebase_safe", fingerprint(audio_path), fingerprint(vocals_path),
             hashlib.sha256("\n".join(lyric_lines).encode("utf-8")).hexdigest(),
             language, align_model, str(bool(strict)),
         ))
@@ -148,7 +149,8 @@ class WhisperXExactAligner:
         return AlignmentResult(cues, engine, confidences, {"source_text_used": True}, evidence)
 
     def align(self, audio_path: Path, lyric_lines: list[str], language: str,
-              bounds: tuple[float, float] | None = None) -> AlignmentResult:
+              bounds: tuple[float, float] | None = None, *,
+              section_local: bool = False) -> AlignmentResult:
         if not lyric_lines:
             return AlignmentResult([], "whisperx-exact-source")
         try:
@@ -184,19 +186,17 @@ class WhisperXExactAligner:
         except Exception as exc:
             raise AlignmentError(f"WhisperX exact-source alignment failed: {type(exc).__name__}: {exc}") from exc
         result = self.result_from_aligned(aligned, lyric_lines, language)
-        if window_start:
-            for cue in result.cues:
-                cue.start += window_start
-                cue.end += window_start
-            if result.evidence:
-                for item in result.evidence.line_evidence:
-                    if item.start is not None:
-                        item.start += window_start
-                    if item.end is not None:
-                        item.end += window_start
+        result.time_base = TimeBase.SECTION_LOCAL if section_local else TimeBase.TRACK_ABSOLUTE
+        result.window_start = window_start
+        result.window_end = window_end
+        if window_start and not section_local:
+            # Non-section callers requesting a crop still receive track time;
+            # the same guarded utility owns every offset operation.
+            result.time_base = TimeBase.SECTION_LOCAL
+            rebase_alignment_result(result, window_start, track_duration)
         result.metadata.update({
             "alignment_model": self.DEFAULT_JA_MODEL if language == "ja" else "whisperx-default",
-            "aligned_audio": str(target), "pipeline_version": "acoustic_truth_v2_exact_recovery",
+            "aligned_audio": str(target), "pipeline_version": "acoustic_truth_v3_timebase_safe",
             "window": [window_start, window_end],
             "alignment_cache_key": self.alignment_cache_key(
                 Path(audio_path), target, lyric_lines, language,

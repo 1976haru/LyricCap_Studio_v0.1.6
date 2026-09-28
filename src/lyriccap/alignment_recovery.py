@@ -6,6 +6,7 @@ from enum import Enum
 from pathlib import Path
 
 from .aligners.base import AlignmentResult
+from .section_timebase import validate_section_stitch
 from .sync_quality import SyncIssue, SyncQualityReport, evaluate_sync_quality
 
 
@@ -107,10 +108,19 @@ class TrackAlignmentTransaction:
             try:
                 result = self._call(aligner, audio_path, lyric_lines, language,
                                     (0.0, track_duration), sections, previous_result)
-                last_report = evaluate_sync_quality(
-                    result.cues, lyric_lines, track_duration,
-                    instrumental_after=instrumental_after, confidences=result.confidences,
-                    evidence=result.evidence, language=language, strict=self.strict)
+                is_section_result = bool(result.metadata.get("section_records") or
+                                         result.metadata.get("source_line_indices") or
+                                         result.time_base.value == "section_local")
+                stitch = (validate_section_stitch(result, len(lyric_lines), track_duration)
+                          if is_section_result else None)
+                if stitch and stitch.hard_failed:
+                    last_report = stitch
+                else:
+                    last_report = evaluate_sync_quality(
+                        result.cues, lyric_lines, track_duration,
+                        instrumental_after=instrumental_after, confidences=result.confidences,
+                        evidence=result.evidence, language=language, strict=self.strict,
+                        vocal_activity_ranges=result.metadata.get("vocal_activity_ranges"))
             except Exception as exc:
                 error = exc
                 last_report = _exception_report(exc)

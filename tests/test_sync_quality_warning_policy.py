@@ -46,7 +46,7 @@ def test_instrumental_gap_with_no_vocal_activity_passes():
     report = evaluate_sync_quality(cues, ["a", "b"], 20, instrumental_after={1},
                                    evidence=evidence(cues), strict=True,
                                    vocal_activity_ranges=[])
-    assert report.status == "PASS"
+    assert report.status == "PASS_WITH_WARNINGS"
 
 
 def test_plausible_fake_sync_fails_acoustic_gate():

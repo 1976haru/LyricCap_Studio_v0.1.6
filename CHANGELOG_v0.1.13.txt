@@ -1,0 +1,9 @@
+LyricCap Studio v0.1.13 - Section Timebase Safe Sync
+
+- Added explicit track-absolute and section-local timestamp coordinate systems.
+- Centralized guarded rebasing for cues and acoustic evidence.
+- Merged section output by source lyric order and validated stitch integrity first.
+- Bounded failed-section recovery by accepted neighboring evidence.
+- Made long-cue and long-gap validation acoustic-evidence aware.
+- Reduced failure popups to one primary cause per failed track.
+- Versioned the alignment pipeline as acoustic_truth_v3_timebase_safe.

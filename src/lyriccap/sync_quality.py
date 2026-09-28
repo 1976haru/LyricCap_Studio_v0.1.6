@@ -89,6 +89,20 @@ def evaluate_sync_quality(
     issues: list[SyncIssue] = []
     durations = [cue.end - cue.start for cue in cues]
     gaps = [cues[i].start - cues[i - 1].start for i in range(1, len(cues))]
+    activity_known = vocal_activity_ranges is not None
+    activity = sorted((float(a), float(b)) for a, b in (vocal_activity_ranges or ()))
+
+    def has_vocal_between(start: float, end: float) -> bool:
+        return any(a < end and b > start for a, b in activity)
+
+    def max_no_vocal_inside(start: float, end: float) -> float:
+        covered = sorted((max(start, a), min(end, b)) for a, b in activity
+                         if a < end and b > start)
+        cursor, longest = start, 0.0
+        for a, b in covered:
+            longest = max(longest, a - cursor)
+            cursor = max(cursor, b)
+        return max(longest, end - cursor)
 
     if track_duration <= 0:
         issues.append(_issue("TRACK_DURATION_UNKNOWN", "HARD", None, None,
@@ -112,7 +126,13 @@ def evaluate_sync_quality(
         elif duration < 0.55:
             issues.append(_issue("SHORT_CUE", "SOFT", i, cue, "cue is shorter than 0.55 seconds"))
         if duration > 10.0:
-            issues.append(_issue("EXTREME_DURATION", "HARD" if weak else "SOFT", i, cue,
+            neighbors_direct = all(
+                j < len(evidence.line_evidence) and evidence.line_evidence[j].direct
+                for j in (i - 1, i + 1) if 0 <= j < len(cues)
+            ) if evidence else False
+            internal_silence = activity_known and max_no_vocal_inside(cue.start, cue.end) > 3.0
+            severe = weak or not neighbors_direct or internal_silence
+            issues.append(_issue("EXTREME_DURATION", "HARD" if severe else "SOFT", i, cue,
                                  "lyric cue exceeds 10 seconds"))
         elif duration > 7.0:
             issues.append(_issue("LONG_CUE", "SOFT", i, cue, "lyric cue exceeds 7 seconds"))
@@ -127,17 +147,15 @@ def evaluate_sync_quality(
                 issues.append(_issue("OVERLAP", "HARD", i, cue, f"overlap is {overlap:.2f} seconds"))
             start_gap = cue.start - previous.start
             if start_gap > 12.0:
-                activity_known = vocal_activity_ranges is not None
-                activity = list(vocal_activity_ranges or ())
-                gap_has_vocal = any(a < cue.start and b > previous.end for a, b in activity)
-                explained = (i in instrumental_after and activity_known and not gap_has_vocal
-                             and (evidence is None or not weak))
-                if not explained:
-                    pathological_neighbor = (previous.end - previous.start > 10.0
-                                             or cue.end - cue.start < 0.18)
-                    issues.append(_issue("START_GAP", "HARD" if gap_has_vocal or (strict and weak)
-                                         or pathological_neighbor else "SOFT", i, cue,
-                                         f"consecutive start gap is {start_gap:.2f} seconds"))
+                previous_ev = (evidence.line_evidence[i - 1]
+                               if evidence and i - 1 < len(evidence.line_evidence) else None)
+                both_direct = bool(previous_ev and previous_ev.direct and line_ev and line_ev.direct)
+                gap_has_vocal = activity_known and has_vocal_between(previous.end, cue.start)
+                explained = ((activity_known and not gap_has_vocal) or i in instrumental_after)
+                severity = "SOFT" if (i in instrumental_after or both_direct and explained) else (
+                    "HARD" if gap_has_vocal or not both_direct else "SOFT")
+                issues.append(_issue("START_GAP", severity, i, cue,
+                                     f"consecutive start gap is {start_gap:.2f} seconds"))
 
     run = 0
     for i, duration in enumerate(durations):

@@ -29,7 +29,7 @@ try:
                               capture_output=True, text=True, timeout=3).stdout.strip() or "unknown"
 except Exception:
     _GIT_SHA = "unknown"
-print(f"LyricCap Studio v0.1.12 git={_GIT_SHA} sync_pipeline=acoustic_truth_v2_exact_recovery")
+print(f"LyricCap Studio v0.1.13 git={_GIT_SHA} sync_pipeline=acoustic_truth_v3_timebase_safe")
 
 SYNC_MODE_LABELS = {
     "정밀 음악 싱크 (보컬 분리 + VAD, 권장)": "music_precise",
@@ -79,7 +79,7 @@ def save_settings(data: dict) -> None:
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("LyricCap Studio v0.1.12 - Exact Recovery Sync")
+        self.title("LyricCap Studio v0.1.13 - Section Timebase Safe Sync")
         self.geometry("1100x960")
         self.minsize(940, 700)
         self.songs = []
@@ -158,7 +158,7 @@ class App(tk.Tk):
         ).grid(row=1, column=2, columnspan=2, padx=8, pady=(0,8), sticky="w")
         ttk.Label(
             opts,
-            text="※ v0.1.12: WhisperX 정확 원문 전체/섹션/복구 정렬을 사용하며 보간 줄을 FINAL에 넣지 않습니다.",
+            text="※ v0.1.13: 섹션 로컬 시간을 한 번만 절대시간으로 변환하고 음향 증거로 검증합니다.",
         ).grid(row=1, column=4, columnspan=3, padx=8, pady=(0,8), sticky="w")
 
         ttk.Label(opts, text="곡 제목 자막 표시(초)").grid(row=2, column=0, padx=8, pady=(0,8))
@@ -251,7 +251,7 @@ class App(tk.Tk):
         self.progress.pack(fill="x", pady=(0, 6))
         self.status = tk.StringVar(value="JSON/TXT와 음원을 선택하세요.")
         ttk.Label(bottom, textvariable=self.status).pack(side="left")
-        ttk.Label(bottom, text="Version: v0.1.12  |  Sync engine: WhisperX Exact Recovery / Demucs  |  Translation: selected engine").pack(side="bottom")
+        ttk.Label(bottom, text="Version: v0.1.13  |  Sync engine: Timebase Safe Exact Recovery / Demucs  |  Translation: selected engine").pack(side="bottom")
         self.run_btn = ttk.Button(bottom, text="▶ 자막 전체 생성", command=self.start_process)
         self.run_btn.pack(side="right")
         self.stop_btn = ttk.Button(bottom, text="■ 중단", command=self.stop_process, state="disabled")
