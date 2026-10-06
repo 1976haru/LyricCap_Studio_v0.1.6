@@ -12,17 +12,11 @@ def srt_time(seconds: float) -> str:
 
 
 def profile_text(cue: Cue, profile: str) -> str:
-    if profile == "en":
-        return cue.text("en")
-    if profile == "en_ko":
-        return f"{cue.text('en')}\n{cue.text('ko')}"
-    if profile == "en_ja":
-        return f"{cue.text('en')}\n{cue.text('ja')}"
-    if profile == "ko":
-        return cue.text("ko")
-    if profile == "ja":
-        return cue.text("ja")
-    raise ValueError(profile)
+    from .batch import required_languages
+
+    # Validate via the shared parser, but retain the profile's declared order.
+    required_languages([profile])
+    return "\n".join(cue.text(language) for language in profile.split("_"))
 
 
 def render(cues: list[Cue], profile: str, offset: float = 0.0) -> str:

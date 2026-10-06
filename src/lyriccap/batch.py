@@ -13,13 +13,12 @@ from .aligners import (WhisperXExactAligner, WhisperXExactSectionAligner,
                        WhisperXExactRecoveryAligner)
 from .alignment_recovery import TrackAlignmentState, TrackAlignmentTransaction
 from .audio import audio_duration
-from .languages import language_name
+from .languages import SOURCE_LANGUAGES, language_name
 from .models import Cue, TrackResult
 from .srt import write_combined, write_srt, write_titles_srt
 from .translator import build_translator
 
-PROFILES = ["en", "en_ko", "en_ja", "ko", "ja"]
-APP_VERSION = "v0.1.13"
+APP_VERSION = "v0.2.0"
 PIPELINE_VERSION = "acoustic_truth_v3_timebase_safe"
 
 TIMEBASE_FAILURE_CODES = {
@@ -60,9 +59,41 @@ def _popup_reason(primary: dict, fallback: str) -> str:
 
 
 def required_languages(profiles: list[str]) -> set[str]:
-    mapping = {"en": {"en"}, "ko": {"ko"}, "ja": {"ja"},
-               "en_ko": {"en", "ko"}, "en_ja": {"en", "ja"}}
-    return set().union(*(mapping.get(profile, set()) for profile in profiles))
+    """Return the language codes named by profiles, rejecting malformed input."""
+    required: set[str] = set()
+    allowed = set(SOURCE_LANGUAGES)
+    for profile in profiles:
+        languages = profile.split("_")
+        if not languages or any(not lang or lang not in allowed for lang in languages):
+            raise ValueError(f"Unsupported subtitle profile: {profile}")
+        if len(languages) > 2 or len(set(languages)) != len(languages):
+            raise ValueError(f"Invalid subtitle profile: {profile}")
+        required.update(languages)
+    return required
+
+
+def profiles_for_source(source_language: str) -> list[str]:
+    """Profiles shown in the UI for one resolved source language."""
+    if source_language not in SOURCE_LANGUAGES:
+        raise ValueError(f"Unsupported source language: {source_language}")
+    preferred_targets = {
+        "en": ["ko", "ja"],
+        "fr": ["ko", "ja"],
+        "ja": ["ko", "en"],
+        "ko": ["ja", "en"],
+    }.get(source_language, ["ko", "ja", "en"])
+    targets = [lang for lang in preferred_targets if lang != source_language]
+    profiles = [source_language, *(f"{source_language}_{lang}" for lang in targets)]
+    profiles.extend(lang for lang in ("ko", "ja", "en") if lang != source_language)
+    return profiles
+
+
+def default_profiles_for_source(source_language: str) -> list[str]:
+    if source_language == "en":
+        return ["en_ko", "en_ja"]
+    if source_language == "fr":
+        return ["fr", "fr_ko", "fr_ja"]
+    return [source_language]
 
 
 def _read_srt(path: Path) -> list[Cue]:
@@ -248,17 +279,39 @@ def process_songs(
     for song in songs:
         translations_by_track[song.track_no] = {song.source_language: list(song.lyrics)}
         translation_failures_by_track[song.track_no] = []
-        for lang in sorted(langs_needed - {song.source_language}):
+        target_languages = sorted(langs_needed - {song.source_language})
+        if target_languages and translation_engine == "gemini" and hasattr(translator, "translate_multi"):
             check_cancel()
             try:
-                translated = translator.translate_many(song.lyrics, song.source_language, lang,
-                                                       title=song.title)
-                if len(translated) != len(song.lyrics):
-                    raise RuntimeError(f"translated line count {len(translated)} != source lyric count {len(song.lyrics)}")
-                translations_by_track[song.track_no][lang] = translated
+                translated_by_language = translator.translate_multi(
+                    song.lyrics, song.source_language, target_languages, title=song.title,
+                )
+                for lang in target_languages:
+                    translated = translated_by_language.get(lang, [])
+                    if len(translated) != len(song.lyrics):
+                        raise RuntimeError(
+                            f"{lang} translated line count {len(translated)} "
+                            f"!= source lyric count {len(song.lyrics)}"
+                        )
+                    translations_by_track[song.track_no][lang] = translated
             except Exception as exc:
-                translation_failures_by_track[song.track_no].append(lang)
-                progress(f"{song.track_no:02d} {lang.upper()} TRANSLATION FAIL - {exc}")
+                translation_failures_by_track[song.track_no].extend(target_languages)
+                progress(f"{song.track_no:02d} MULTILINGUAL TRANSLATION FAIL - {exc}")
+        else:
+            for lang in target_languages:
+                check_cancel()
+                try:
+                    translated = translator.translate_many(
+                        song.lyrics, song.source_language, lang, title=song.title,
+                    )
+                    if len(translated) != len(song.lyrics):
+                        raise RuntimeError(
+                            f"translated line count {len(translated)} != source lyric count {len(song.lyrics)}"
+                        )
+                    translations_by_track[song.track_no][lang] = translated
+                except Exception as exc:
+                    translation_failures_by_track[song.track_no].append(lang)
+                    progress(f"{song.track_no:02d} {lang.upper()} TRANSLATION FAIL - {exc}")
 
     results: list[TrackResult] = []
     failures: list[TrackResult] = []
@@ -307,7 +360,7 @@ def process_songs(
                 cue.set_text(lang, text)
 
         stem = f"{song.track_no:02d}_{safe_name(song.title)}"
-        source_profile = song.source_language if song.source_language in {"en", "ko", "ja"} else "en"
+        source_profile = song.source_language
         write_srt(output_dir / "tracks" / f"{stem}_source.srt", cues, source_profile)
         for profile in profiles:
             profile_langs = required_languages([profile]) - {song.source_language}
@@ -398,7 +451,7 @@ def process_songs(
     source_languages = {item.song.source_language for item in results}
     if not retry_failed_only and len(source_languages) == 1:
         source_language = next(iter(source_languages))
-        source_profile = source_language if source_language in {"en", "ko", "ja"} else "en"
+        source_profile = source_language
         write_combined(output_dir / "combined" / "PLAYLIST_source.srt", shifted_tracks, source_profile)
     failure_marker = output_dir / "combined" / "SYNC_FAILED_DO_NOT_USE.txt"
     if failure_marker.exists():
