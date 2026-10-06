@@ -18,7 +18,7 @@ from lyriccap.parsers import parse_lyrics_file, SKIPPED_TRACKS
 from lyriccap.utils import discover_audio
 from lyriccap.matcher import match_audio
 from lyriccap.batch import (
-    process_songs, required_languages, profiles_for_source,
+    process_songs, required_languages,
     default_profiles_for_source, JobCancelled,
 )
 from lyriccap.languages import SOURCE_LANGUAGES, language_name
@@ -32,7 +32,9 @@ try:
                               capture_output=True, text=True, timeout=3).stdout.strip() or "unknown"
 except Exception:
     _GIT_SHA = "unknown"
-print(f"LyricCap Studio v0.2.0 git={_GIT_SHA} sync_pipeline=acoustic_truth_v3_timebase_safe")
+APP_VERSION = "v0.2.1"
+print(f"LyricCap Studio {APP_VERSION} app={Path(__file__).resolve()} git={_GIT_SHA} "
+      "sync_pipeline=acoustic_truth_v3_timebase_safe")
 
 SYNC_MODE_LABELS = {
     "정밀 음악 싱크 (보컬 분리 + VAD, 권장)": "music_precise",
@@ -42,9 +44,35 @@ SYNC_MODE_LABELS = {
 
 MODEL_CHOICES = ["tiny", "base", "small", "medium", "tiny.en", "base.en", "small.en", "medium.en"]
 
+PROFILE_SPECS = [
+    ("en", "영어"),
+    ("en_ko", "영어 + 한국어"),
+    ("en_ja", "영어 + 일본어"),
+    ("fr", "프랑스어(샹송)"),
+    ("fr_ko", "프랑스어 + 한국어"),
+    ("fr_ja", "프랑스어 + 일본어"),
+    ("ja", "일본어"),
+    ("ja_ko", "일본어 + 한국어"),
+    ("ja_en", "일본어 + 영어"),
+    ("ko", "한국어"),
+    ("ko_ja", "한국어 + 일본어"),
+    ("ko_en", "한국어 + 영어"),
+]
+CHANNEL_PRESETS = ("자동", "한국 채널", "일본 채널", "원문만")
 
-def profile_label(profile: str) -> str:
-    return " + ".join(language_name(code) for code in profile.split("_"))
+
+def get_visible_profile_specs() -> list[tuple[str, str]]:
+    """Single source of truth for every profile shown by the GUI."""
+    return list(PROFILE_SPECS)
+
+
+def recommended_profiles(source_language: str, channel_preset: str = "자동") -> set[str]:
+    if channel_preset == "원문만":
+        return {source_language}
+    target = {"한국 채널": "ko", "일본 채널": "ja"}.get(channel_preset)
+    if target:
+        return {source_language if source_language == target else f"{source_language}_{target}"}
+    return set(default_profiles_for_source(source_language))
 # "가사 원문" 드롭다운. 코드만 보여주면 fr/es가 뭔지 알기 어려워 이름을 붙입니다.
 SOURCE_LANG_CHOICES = ["auto"] + [f"{c} ({language_name(c)})" for c in SOURCE_LANGUAGES]
 TRANSLATION_ENGINE_LABELS = {
@@ -79,7 +107,7 @@ def save_settings(data: dict) -> None:
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("LyricCap Studio v0.2.0 - Source-aware Multilingual Subtitles")
+        self.title(f"LyricCap Studio {APP_VERSION} - Source-aware Multilingual Subtitles")
         self.geometry("1100x960")
         self.minsize(940, 700)
         self.songs = []
@@ -94,7 +122,11 @@ class App(tk.Tk):
         self.sync_mode_label = tk.StringVar(value="정밀 음악 싱크 (보컬 분리 + VAD, 권장)")
         self.refine_timestamps = tk.BooleanVar(value=False)
         self.fallback_enabled = tk.BooleanVar(value=True)
-        self.profile_vars = {}
+        self.profile_vars = {
+            profile: tk.BooleanVar(value=False) for profile, _label in get_visible_profile_specs()
+        }
+        self.channel_preset = tk.StringVar(value="자동")
+        self.detected_language = tk.StringVar(value="원문 감지: 가사 파일을 선택하세요")
         self.queue = QueueManager()
         self._queue_running = False
         self._single_running = False
@@ -160,7 +192,7 @@ class App(tk.Tk):
         ).grid(row=1, column=2, columnspan=2, padx=8, pady=(0,8), sticky="w")
         ttk.Label(
             opts,
-            text="※ v0.2.0: 원문 언어별 자막 프로필과 직접 번역을 지원합니다.",
+            text="※ v0.2.1: 모든 출력 프로필을 항상 표시하고 원문/채널에 따라 체크를 추천합니다.",
         ).grid(row=1, column=4, columnspan=3, padx=8, pady=(0,8), sticky="w")
 
         ttk.Label(opts, text="곡 제목 자막 표시(초)").grid(row=2, column=0, padx=8, pady=(0,8))
@@ -197,13 +229,30 @@ class App(tk.Tk):
 
         prof = ttk.LabelFrame(self, text="생성할 자막")
         prof.pack(fill="x", padx=12, pady=(0, 8))
+        ttk.Label(prof, text="채널 프리셋:").grid(row=0, column=0, padx=(12, 4), pady=6, sticky="w")
+        preset_combo = ttk.Combobox(
+            prof, textvariable=self.channel_preset, state="readonly", width=12,
+            values=CHANNEL_PRESETS,
+        )
+        preset_combo.grid(row=0, column=1, padx=4, pady=6, sticky="w")
+        preset_combo.bind("<<ComboboxSelected>>", lambda _event: self._apply_profile_recommendation())
+        ttk.Label(prof, textvariable=self.detected_language).grid(
+            row=0, column=2, columnspan=2, padx=12, pady=6, sticky="w"
+        )
         self.profile_options = ttk.Frame(prof)
-        self.profile_options.grid(row=0, column=0, sticky="w")
+        self.profile_options.grid(row=1, column=0, columnspan=4, sticky="w")
+        self.profile_checkbuttons = []
+        for index, (profile, label) in enumerate(get_visible_profile_specs()):
+            checkbutton = ttk.Checkbutton(
+                self.profile_options, text=label, variable=self.profile_vars[profile],
+            )
+            checkbutton.grid(row=index // 3, column=index % 3, padx=12, pady=4, sticky="w")
+            self.profile_checkbuttons.append(checkbutton)
         ttk.Checkbutton(
             prof, text="Demucs 실패 시 원본 음원 Whisper fallback",
             variable=self.fallback_enabled,
-        ).grid(row=0, column=1, padx=12, pady=8, sticky="w")
-        self._update_profile_options("en")
+        ).grid(row=2, column=3, padx=12, pady=4, sticky="w")
+        self._apply_profile_recommendation("en")
 
         table_frame = ttk.LabelFrame(self, text="곡 매칭")
         table_frame.pack(fill="both", expand=True, padx=12, pady=(0, 10))
@@ -254,7 +303,10 @@ class App(tk.Tk):
         self.progress.pack(fill="x", pady=(0, 6))
         self.status = tk.StringVar(value="JSON/TXT와 음원을 선택하세요.")
         ttk.Label(bottom, textvariable=self.status).pack(side="left")
-        ttk.Label(bottom, text="Version: v0.2.0  |  Sync engine: Timebase Safe Exact Recovery / Demucs  |  Translation: selected engine").pack(side="bottom")
+        ttk.Label(
+            bottom,
+            text=f"Version: {APP_VERSION} | App: {Path(__file__).resolve()} | Git: {_GIT_SHA}",
+        ).pack(side="bottom")
         self.run_btn = ttk.Button(bottom, text="▶ 자막 전체 생성", command=self.start_process)
         self.run_btn.pack(side="right")
         self.stop_btn = ttk.Button(bottom, text="■ 중단", command=self.stop_process, state="disabled")
@@ -331,7 +383,13 @@ class App(tk.Tk):
             songs = parse_lyrics_file(lyrics, self._source_lang_code())
             resolved_languages = {song.source_language for song in songs}
             if len(resolved_languages) == 1:
-                self._update_profile_options(next(iter(resolved_languages)))
+                source_language = next(iter(resolved_languages))
+                self.detected_language.set(
+                    f"원문 감지: {language_name(source_language)} ({len(songs)}곡)"
+                )
+                self._apply_profile_recommendation(source_language)
+            else:
+                self.detected_language.set("원문 감지: 혼합 언어")
             audios = list(self.selected_audio_files) if self.selected_audio_files else (discover_audio(folder) if folder else [])
             self.songs = match_audio(songs, audios)
             self.tree.delete(*self.tree.get_children())
@@ -359,20 +417,22 @@ class App(tk.Tk):
         """드롭다운의 "fr (프랑스어)" 표기에서 언어 코드만 꺼냅니다."""
         return self.source_lang.get().split(" ", 1)[0].strip() or "auto"
 
-    def _update_profile_options(self, source_language: str) -> None:
-        """Rebuild output choices from the resolved source language."""
-        profiles = profiles_for_source(source_language)
-        defaults = set(default_profiles_for_source(source_language))
-        previous = {profile: variable.get() for profile, variable in self.profile_vars.items()}
-        for child in self.profile_options.winfo_children():
-            child.destroy()
-        self.profile_vars = {}
-        for index, profile in enumerate(profiles):
-            variable = tk.BooleanVar(value=previous.get(profile, profile in defaults))
-            self.profile_vars[profile] = variable
-            ttk.Checkbutton(
-                self.profile_options, text=profile_label(profile), variable=variable,
-            ).grid(row=0, column=index, padx=12, pady=8, sticky="w")
+    def _resolved_source_language(self) -> str:
+        languages = {song.source_language for song in self.songs}
+        if len(languages) == 1:
+            return next(iter(languages))
+        selected = self._source_lang_code()
+        return selected if selected in SOURCE_LANGUAGES else "en"
+
+    def _apply_profile_recommendation(self, source_language: str | None = None) -> None:
+        source_language = source_language or self._resolved_source_language()
+        selected = recommended_profiles(source_language, self.channel_preset.get())
+        for profile, variable in self.profile_vars.items():
+            variable.set(profile in selected)
+
+    def get_profile_ui_snapshot(self) -> list[str]:
+        """Return the labels currently rendered as profile checkbuttons."""
+        return [str(widget.cget("text")) for widget in self.profile_checkbuttons]
 
     def _needs_translation(self, profiles: list[str]) -> bool:
         langs = required_languages(profiles)

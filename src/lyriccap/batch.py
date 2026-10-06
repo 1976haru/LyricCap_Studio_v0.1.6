@@ -18,7 +18,7 @@ from .models import Cue, TrackResult
 from .srt import write_combined, write_srt, write_titles_srt
 from .translator import build_translator
 
-APP_VERSION = "v0.2.0"
+APP_VERSION = "v0.2.1"
 PIPELINE_VERSION = "acoustic_truth_v3_timebase_safe"
 
 TIMEBASE_FAILURE_CODES = {

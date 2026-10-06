@@ -1,0 +1,8 @@
+LyricCap Studio v0.2.1
+
+- 실제 UI에서 프랑스어 출력 프로필 항상 노출
+- 프랑스어(샹송) / 프랑스어+한국어 / 프랑스어+일본어
+- 채널 프리셋
+- 원문 언어 자동 추천 체크
+- 실행 app.py 경로 진단
+- UI profile regression test

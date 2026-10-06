@@ -17,6 +17,9 @@ from lyriccap.models import Cue, Song
 from lyriccap.parsers import parse_lyrics_file
 from lyriccap.srt import profile_text, render
 
+sys.path.insert(0, str(ROOT))
+from app import get_visible_profile_specs, recommended_profiles
+
 
 def test_french_source_profiles_render_in_declared_order():
     cue = Cue(0, 1, "Je t'attendrai sous la pluie", "fr")
@@ -26,6 +29,28 @@ def test_french_source_profiles_render_in_declared_order():
     assert profile_text(cue, "fr_ja").splitlines() == [cue.source, cue.ja]
     assert profile_text(cue, "fr_ko").splitlines() == [cue.source, cue.ko]
     assert cue.source in render([cue], "fr")
+
+
+def test_visible_profile_specs_expose_french_profiles_with_chanson_label():
+    visible = dict(get_visible_profile_specs())
+    assert visible["fr"] == "프랑스어(샹송)"
+    assert "fr_ko" in visible
+    assert visible["fr_ja"] == "프랑스어 + 일본어"
+
+
+@pytest.mark.parametrize(("preset", "expected"), [
+    ("일본 채널", {"fr_ja"}),
+    ("한국 채널", {"fr_ko"}),
+    ("원문만", {"fr"}),
+])
+def test_french_channel_preset_recommendations(preset, expected):
+    assert recommended_profiles("fr", preset) == expected
+
+
+def test_existing_english_channel_profiles_remain_supported():
+    cue = Cue(0, 1, "Hello", "en", ko="안녕", ja="こんにちは")
+    assert profile_text(cue, "en_ko") == "Hello\n안녕"
+    assert profile_text(cue, "en_ja") == "Hello\nこんにちは"
 
 
 @pytest.mark.parametrize(("profile", "expected"), [
