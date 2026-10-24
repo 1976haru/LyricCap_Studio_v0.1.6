@@ -1,0 +1,22 @@
+{
+  "packageName": "OLD POP LOUNGE - First Snow",
+  "masterVersion": "fixture",
+  "language": "English sung lyrics 100%",
+  "tracks": [
+    {"trackNo": "01", "title": "Leave the Radio On", "sungLanguage": "English (sung lyrics 100%)", "lyrics": "[Intro: four bars]\n[Verse 1]\nThe radio had a silver dial\nIt kept us warm for one more mile"},
+    {"trackNo": "02", "title": "The Blue Cup by the Window", "lyrics": "[Verse 1]\nThe blue cup by the window\nCaught the early light"},
+    {"trackNo": "03", "title": "First Snow Avenue", "lyrics": "[Verse]\nSnow was falling on the avenue"},
+    {"trackNo": "04", "title": "Letters in the Drawer", "lyrics": "[Chorus]\nLetters waited in the drawer"},
+    {"trackNo": "05", "title": "Sunday Train", "lyrics": "[Verse]\nWe took the quiet Sunday train"},
+    {"trackNo": "06", "title": "Amber Streetlights", "lyrics": "[Bridge]\nAmber streetlights led us home"},
+    {"trackNo": "07", "title": "The Last Cafe", "lyrics": "[Verse]\nThe last cafe was closing down"},
+    {"trackNo": "08", "title": "Old Polaroid", "lyrics": "[Chorus]\nYour smile lives in an old Polaroid"},
+    {"trackNo": "09", "title": "Winter Telephone", "lyrics": "[Verse]\nThe winter telephone rang twice"},
+    {"trackNo": "10", "title": "Slow Dance Kitchen", "lyrics": "[Verse]\nWe slow danced in the kitchen"},
+    {"trackNo": "11", "title": "Paper Moon", "lyrics": "[Tag]\nA paper moon above the town"},
+    {"trackNo": "12", "title": "Morning News", "lyrics": "[Verse]\nMorning news was on the table"},
+    {"trackNo": "13", "title": "Velvet December", "lyrics": "[Final Chorus]\nVelvet December called my name"},
+    {"trackNo": "14", "title": "Corner Record Shop", "lyrics": "[Verse]\nAt the corner record shop we met"},
+    {"trackNo": "15", "title": "Keep the Porch Light", "lyrics": "[Outro]\nKeep the porch light on tonight"}
+  ]
+}

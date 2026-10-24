@@ -1,4 +1,26 @@
-# LyricCap Studio v0.1.7
+# LyricCap Studio v0.2.2
+
+## JSON 형식
+
+LyricCap은 `songs`와 `tracks` 구조를 모두 지원합니다.
+
+```json
+{
+  "songs": [
+    {"trackNo": 1, "title": "...", "lyrics": "..."}
+  ]
+}
+```
+
+```json
+{
+  "tracks": [
+    {"trackNo": "01", "title": "...", "lyrics": "..."}
+  ]
+}
+```
+
+따라서 Suno용/음악 생성용 JSON이 `tracks` 구조여도 별도 변환 없이 원본 파일을 바로 사용할 수 있습니다.
 
 ## v0.1.7 Sync Recovery
 

@@ -1,0 +1,9 @@
+LyricCap Studio v0.2.2
+
+- songs / tracks JSON 자동 감지
+- Suno/음악 생성용 JSON 직접 입력 지원
+- 다양한 track/title/lyrics field alias 지원
+- JSON 언어 힌트 자동 감지 개선
+- 변환 파일 없이 원본 JSON 직접 사용
+- Queue에서도 tracks JSON 지원
+- 기존 v0.2.1 다국어 출력 유지

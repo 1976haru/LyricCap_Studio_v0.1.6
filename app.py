@@ -14,7 +14,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from lyriccap.parsers import parse_lyrics_file, SKIPPED_TRACKS
+from lyriccap.parsers import parse_lyrics_document, parse_lyrics_file, SKIPPED_TRACKS
 from lyriccap.utils import discover_audio
 from lyriccap.matcher import match_audio
 from lyriccap.batch import (
@@ -32,7 +32,7 @@ try:
                               capture_output=True, text=True, timeout=3).stdout.strip() or "unknown"
 except Exception:
     _GIT_SHA = "unknown"
-APP_VERSION = "v0.2.1"
+APP_VERSION = "v0.2.2"
 print(f"LyricCap Studio {APP_VERSION} app={Path(__file__).resolve()} git={_GIT_SHA} "
       "sync_pipeline=acoustic_truth_v3_timebase_safe")
 
@@ -380,7 +380,8 @@ class App(tk.Tk):
         if not lyrics or not lyrics.exists():
             return
         try:
-            songs = parse_lyrics_file(lyrics, self._source_lang_code())
+            parsed = parse_lyrics_document(lyrics, self._source_lang_code())
+            songs = parsed.songs
             resolved_languages = {song.source_language for song in songs}
             if len(resolved_languages) == 1:
                 source_language = next(iter(resolved_languages))
@@ -399,7 +400,8 @@ class App(tk.Tk):
             skipped = list(SKIPPED_TRACKS)
             if skipped:
                 self.status.set(
-                    f"가사 {len(self.songs)}곡 / 음원 매칭 {matched}곡 "
+                    f"가사 {len(self.songs)}곡 / 구조 {parsed.info.schema} / "
+                    f"원문 {language_name(parsed.info.source_language)} / 음원 매칭 {matched}곡 "
                     f"/ 가사 없어 제외 {len(skipped)}곡"
                 )
                 messagebox.showwarning(
@@ -409,7 +411,10 @@ class App(tk.Tk):
                     + "\n\n원본 가사 파일을 확인해 주세요.",
                 )
             else:
-                self.status.set(f"가사 {len(self.songs)}곡 / 음원 매칭 {matched}곡")
+                self.status.set(
+                    f"가사 {len(self.songs)}곡 / 구조 {parsed.info.schema} / "
+                    f"원문 {language_name(parsed.info.source_language)} / 음원 매칭 {matched}곡"
+                )
         except Exception as e:
             messagebox.showerror("불러오기 오류", str(e))
 
